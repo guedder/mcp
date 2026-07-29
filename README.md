@@ -50,6 +50,9 @@ Após a publicação, execute o servidor HTTP com:
 GUEDDER_MCP_HOST=0.0.0.0 GUEDDER_BEARER_TOKEN=seu-token npx -y @guedder/mcp
 ```
 
+A imagem multi-arquitetura é publicada pelo GitHub Actions em
+`ghcr.io/guedder/mcp:latest`.
+
 ## Schema de saída e contexto
 
 Cada ferramenta devolve o JSON original em `content` e também em
