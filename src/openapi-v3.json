@@ -1,0 +1,3013 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Guedder API",
+    "description": "API do Guedder, a plataforma de venda de ingressos para eventos.",
+    "version": "6.2.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.dev.services.guedder.com",
+      "description": "Generated server url"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Lote",
+      "description": "Lotes de ingressos disponíveis"
+    },
+    {
+      "name": "Home",
+      "description": "Destaques e layout dinâmico da home"
+    },
+    {
+      "name": "Evento",
+      "description": "Listagem e detalhes de eventos"
+    },
+    {
+      "name": "Atracoes",
+      "description": "Line-up e atrações do evento"
+    },
+    {
+      "name": "Reserva",
+      "description": "Semáforo de reserva de assento (hold temporário e mapa de status)"
+    },
+    {
+      "name": "Usuario",
+      "description": "Perfil e preferências do usuário autenticado"
+    },
+    {
+      "name": "Transferencia",
+      "description": "Transferência de ingressos entre usuários"
+    },
+    {
+      "name": "Checkout",
+      "description": "Sessão de compra e orçamento"
+    },
+    {
+      "name": "Administrativo",
+      "description": "Operações restritas à administração da plataforma (role ADMIN)"
+    },
+    {
+      "name": "Compra",
+      "description": "Histórico de compras do usuário"
+    },
+    {
+      "name": "Ingresso",
+      "description": "Ingressos do usuário e check-in"
+    }
+  ],
+  "paths": {
+    "/api/v3/usuarios/notification-tokens": {
+      "get": {
+        "tags": [
+          "Usuario"
+        ],
+        "summary": "Lista os push tokens (dispositivos) do usuário autenticado",
+        "description": "Retorna os tokens de notificação associados ao usuário, junto com o nome do dispositivo (`deviceName`) quando informado. Útil para a tela de gerenciamento de sessões/dispositivos. ",
+        "operationId": "listarNotificationTokens",
+        "responses": {
+          "200": {
+            "description": "Lista de tokens do usuário",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedNotificationToken"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedNotificationToken"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/wallet-config": {
+      "get": {
+        "tags": [
+          "Checkout"
+        ],
+        "summary": "Retorna a configuração de Google Pay / Apple Pay",
+        "description": "Retorna as configurações de carteira digital (Google Pay / Apple Pay) usadas pelo client para inicializar os botões de pagamento. Endpoint público. ",
+        "operationId": "getWalletConfig",
+        "responses": {
+          "200": {
+            "description": "Configuração de wallet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletConfig"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/usuarios/perfil": {
+      "get": {
+        "tags": [
+          "Usuario"
+        ],
+        "summary": "Retorna os dados do usuário autenticado",
+        "description": "Retorna o perfil completo do usuário autenticado a partir do token JWT: identidade, contato, papel (`role`) e flags de permissão.  Legado: `GET /api/v1/usuarios/usuario_logado` ",
+        "operationId": "getUsuarioLogado",
+        "responses": {
+          "200": {
+            "description": "Dados do usuário autenticado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsuarioEntity"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsuarioEntity"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/transferencias-pendentes": {
+      "get": {
+        "tags": [
+          "Transferencia"
+        ],
+        "summary": "Lista as transferências pendentes do usuário autenticado",
+        "description": "Lista as transferências de ingresso pendentes — tanto as enviadas pelo usuário (aguardando aceite do destinatário) quanto as recebidas (aguardando o aceite do próprio usuário). ",
+        "operationId": "listarTransferenciasPendentes",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Número da página (0-based).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Quantidade de itens por página.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de transferências pendentes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedTransferenciaPendente"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedTransferenciaPendente"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/sessoes/{sessaoId}/assentos/status": {
+      "get": {
+        "tags": [
+          "Reserva"
+        ],
+        "summary": "Mapa de status dos assentos de uma sessão",
+        "operationId": "listarStatusAssentos",
+        "parameters": [
+          {
+            "name": "sessaoId",
+            "in": "path",
+            "description": "ID UUID da sessão.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status de todos os assentos da sessão",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedStatusAssento"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/layout": {
+      "get": {
+        "tags": [
+          "Home"
+        ],
+        "summary": "Retorna a configuração de layout dinâmico da home",
+        "description": "Legado: `GET /config/layout/publico` O layout é uma lista de widgets configuráveis (text, carousel, spaceBox, etc.) com endpoints embutidos. O Flutter e o Angular renderizam cada item dinamicamente. ",
+        "operationId": "getLayoutConfig",
+        "parameters": [
+          {
+            "name": "rota",
+            "in": "query",
+            "description": "Path da rota para buscar layout específico. Ex: /",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Configuração de layout da página",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayoutConfig"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayoutConfig"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit atingido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/ingressos": {
+      "get": {
+        "tags": [
+          "Ingresso"
+        ],
+        "summary": "Lista paginada dos ingressos do comprador autenticado",
+        "description": "Legado: `GET /api/v2/ingresso/meus_ingressos/todos` Retorna a lista paginada dos ingressos do comprador. O agrupamento por status (ativos, encerrados, pendentes etc.) é responsabilidade do client. ",
+        "operationId": "getMeusIngressos",
+        "parameters": [
+          {
+            "name": "cicloDeVida",
+            "in": "query",
+            "description": "Filtro de ciclo de vida do ingresso: ATIVO (padrão), ENCERRADO ou TRANSFERENCIA_PENDENTE. ",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ATIVO",
+                "ENCERRADO",
+                "TRANSFERENCIA_PENDENTE"
+              ]
+            }
+          },
+          {
+            "name": "eventoId",
+            "in": "query",
+            "description": "Filtra os ingressos por evento.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Número da página (0-based).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Quantidade de itens por página.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Ordenação no formato campo,direção.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de ingressos do comprador",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedIngresso"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedIngresso"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/home/destaques": {
+      "get": {
+        "tags": [
+          "Home"
+        ],
+        "summary": "Lista os eventos em destaque para a home",
+        "description": "Legado: `GET /api/v1/home/destaque/publico/` Retornados como carrossel na tela principal. ",
+        "operationId": "getEventosDestaque",
+        "responses": {
+          "200": {
+            "description": "Eventos em destaque",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedFotoCapa"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedFotoCapa"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit atingido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/home/destaque/publico": {
+      "get": {
+        "tags": [
+          "Home"
+        ],
+        "summary": "Alias legado da home com links e listas principais",
+        "description": "Compatibilidade com o path legado usado por clients em migração. Retorna links para as três listas v1 e os dados iniciais de `mais-vistos`, `proximos` e `mais-eventos`. ",
+        "operationId": "getHomeDestaqueLegacyPublico",
+        "responses": {
+          "200": {
+            "description": "Home pública compatível",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit atingido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/v3/eventos": {
+      "get": {
+        "tags": [
+          "Evento"
+        ],
+        "summary": "Lista eventos públicos ativos com filtros opcionais",
+        "description": "Lista os eventos públicos ativos, com filtros opcionais por cidade, estado e categoria. Endpoint público (sem autenticação).  Legado: `GET /api/v1/evento` ",
+        "operationId": "listarEventos",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Número da página dos resultados, compatível com Sympla (1-based).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 1,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "Registros por página, compatível com Sympla.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Data inicial no formato YYYY-MM-DD[ HH:mm:ss].",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Data final no formato YYYY-MM-DD[ HH:mm:ss].",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "published",
+            "in": "query",
+            "description": "Compatibilidade Sympla; por padrão a v3 lista eventos públicos publicados.",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          {
+            "name": "field_sort",
+            "in": "query",
+            "description": "Campo de ordenação compatível com Sympla.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "start_date"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Direção da ordenação.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "ASC"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "description": "Compatibilidade Sympla; sparse fieldset ainda não aplicado nesta rota.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "timezone",
+            "in": "query",
+            "description": "Compatibilidade Sympla para clientes existentes.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "America/Sao_Paulo"
+            }
+          },
+          {
+            "name": "filtro",
+            "in": "query",
+            "description": "Busca textual por relevância (GUE-229). Casa o termo contra o nome do evento (prioritário), a categoria e a cidade/local. Insensível a acento e caixa (ex.: `sao` casa `São`, `jorge` casa `Jorge`).  Quando presente, o **ranking de relevância assume a ordenação** e sobrepõe `field_sort`/`sort`, na seguinte prioridade: correspondência exata do nome > prefixo do nome > prefixo de palavra > contém no nome > categoria > cidade/local. Empates são desempatados pelo evento futuro mais próximo (`data_inicio` ascendente).  Recomenda-se enviar a partir de 2 caracteres (o cliente aplica o mínimo). Continua respeitando o recorte de eventos públicos ativos e futuros e a paginação (`page`/`page_size`). ",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nomeCidade",
+            "in": "query",
+            "description": "Filtra pelo nome da cidade do evento.",
+            "required": false,
+            "deprecated": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nomeEstado",
+            "in": "query",
+            "description": "Filtra pela sigla da UF (ex: SP, RJ).",
+            "required": false,
+            "deprecated": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "categoriaEventoEnum",
+            "in": "query",
+            "description": "Filtra pelo identificador da categoria do evento.",
+            "required": false,
+            "deprecated": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de eventos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEvento"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEvento"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit atingido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/eventos/{eventoId}": {
+      "get": {
+        "tags": [
+          "Evento"
+        ],
+        "summary": "Retorna os dados básicos de um evento por ID ou código",
+        "description": "Retorna os dados básicos de um evento identificado por UUID ou por código alfanumérico. Endpoint público.  Legado: `GET /api/v1/evento/{id}` ",
+        "operationId": "getEventoById",
+        "parameters": [
+          {
+            "name": "eventoId",
+            "in": "path",
+            "description": "ID UUID ou código alfanumérico do evento.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dados do evento",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DadosBasicosEventoDto"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DadosBasicosEventoDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso não encontrado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/eventos/{eventoId}/parametros-venda": {
+      "get": {
+        "tags": [
+          "Checkout"
+        ],
+        "summary": "Retorna as formas de pagamento e regras de venda de um evento",
+        "description": "Legado: `GET /api/v2/compra/evento/{eventoId}/parametros-venda/publico` Pode retornar 404 se o evento não tiver parâmetros configurados. ",
+        "operationId": "getParametrosVenda",
+        "parameters": [
+          {
+            "name": "eventoId",
+            "in": "path",
+            "description": "ID UUID ou código alfanumérico do evento.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Parâmetros de venda do evento",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParametrosVendaEvento"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParametrosVendaEvento"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso não encontrado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/eventos/{eventoId}/lotes": {
+      "get": {
+        "tags": [
+          "Lote"
+        ],
+        "summary": "Lista os lotes disponíveis para compra em um evento",
+        "description": "Lista os lotes disponíveis para compra em um evento (apenas os lotes públicos/visíveis). Endpoint público.  Legado: `GET /api/v1/lote/evento/{eventoId}/publico` ",
+        "operationId": "listarLotesPublicos",
+        "parameters": [
+          {
+            "name": "eventoId",
+            "in": "path",
+            "description": "ID UUID ou código alfanumérico do evento.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de lotes públicos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedLote"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedLote"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso não encontrado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/eventos/{eventoId}/lotes/{loteId}": {
+      "get": {
+        "tags": [
+          "Lote"
+        ],
+        "summary": "Retorna um lote pelo código ou ID do evento e do lote",
+        "description": "Legado: `GET /api/v1/lote/{codigoOrEventoId}/lote/{codigoOrLoteId}` Aceita tanto IDs UUID quanto códigos alfanuméricos. ",
+        "operationId": "getLotePorCodigoOuId",
+        "parameters": [
+          {
+            "name": "eventoId",
+            "in": "path",
+            "description": "ID UUID ou código alfanumérico do evento (aceita UUID ou código).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "loteId",
+            "in": "path",
+            "description": "ID UUID ou código alfanumérico do lote (aceita UUID ou código).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dados do lote",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoteEntity"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoteEntity"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso não encontrado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/eventos/{eventoId}/ingressos": {
+      "get": {
+        "tags": [
+          "Ingresso"
+        ],
+        "summary": "Lista ingressos de um evento para check-in (acesso produtor/admin)",
+        "description": "Legado: `GET /api/v2/ingresso/{eventoId}/buscar` Requer permissão de produtor ou administrador do evento. ",
+        "operationId": "buscarIngressosPorEvento",
+        "parameters": [
+          {
+            "name": "eventoId",
+            "in": "path",
+            "description": "ID UUID ou código alfanumérico do evento.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filtro",
+            "in": "query",
+            "description": "Texto livre para busca por nome, email ou código.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Número da página (0-based).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Quantidade de itens por página.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          },
+          {
+            "name": "sessaoId",
+            "in": "query",
+            "description": "Filtra os ingressos por sessão do evento.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Exemplo: nomeParticipante,asc",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de ingressos para check-in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedIngressosCheckIn"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedIngressosCheckIn"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token válido mas sem permissão para o recurso.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/eventos/{eventoId}/cupons/{nome}": {
+      "get": {
+        "tags": [
+          "Checkout"
+        ],
+        "summary": "Valida um cupom de desconto para um evento",
+        "description": "Valida a aplicabilidade de um cupom de desconto para um evento e retorna os dados do desconto quando disponível. Validação voltada ao comprador; o CRUD de cupons permanece na v1.  Autenticação opcional: quando o token é informado, o limite de uso por usuário é considerado na validação. ",
+        "operationId": "validarCupom",
+        "parameters": [
+          {
+            "name": "eventoId",
+            "in": "path",
+            "description": "ID UUID ou código alfanumérico do evento.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nome",
+            "in": "path",
+            "description": "Nome/código do cupom a validar.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resultado da validação do cupom",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CupomValidacaoDto"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CupomValidacaoDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso não encontrado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/eventos/{eventoId}/atracoes": {
+      "get": {
+        "tags": [
+          "Atracoes"
+        ],
+        "summary": "Lista as atrações (line-up) de um evento",
+        "description": "Lista as atrações (line-up) de um evento. Endpoint público; coleção bounded (retorna página única).  Legado: `GET /api/v1/evento/{eventoId}/atracoes/publico` ",
+        "operationId": "listarAtracoesPorEvento",
+        "parameters": [
+          {
+            "name": "eventoId",
+            "in": "path",
+            "description": "ID UUID ou código alfanumérico do evento.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de atrações",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedAtracao"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedAtracao"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Recurso não encontrado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/eventos/favoritos": {
+      "get": {
+        "tags": [
+          "Evento"
+        ],
+        "summary": "Lista os eventos favoritados pelo usuário autenticado",
+        "description": "Lista os eventos marcados como favoritos pelo usuário autenticado.  Legado: `GET /api/v1/evento/favoritos` ",
+        "operationId": "listarEventosFavoritos",
+        "responses": {
+          "200": {
+            "description": "Lista de eventos favoritos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEvento"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEvento"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/evento": {
+      "get": {
+        "tags": [
+          "Evento"
+        ],
+        "summary": "Alias legado singular para listar eventos",
+        "description": "Alias de compatibilidade para `GET /api/v3/eventos`. Aceita os mesmos filtros Sympla-compatible (`page`, `page_size`, `from`, `to`, `published`, `field_sort`, `sort`, `fields`, `timezone`). ",
+        "operationId": "listarEventosLegacySingular",
+        "responses": {
+          "200": {
+            "description": "Lista de eventos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEvento"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEvento"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit atingido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/api/v3/compras": {
+      "get": {
+        "tags": [
+          "Compra"
+        ],
+        "summary": "Lista o histórico de compras do usuário autenticado (paginado)",
+        "description": "Legado: `GET /api/v1/minhas_compras` Ordenação padrão: dataCompra,desc. ",
+        "operationId": "getMinhasCompras",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Número da página (0-based).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Quantidade de itens por página.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Ordenação no formato campo,direção (ex: dataCompra,desc).",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "dataCompra,desc"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Histórico de compras paginado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedResumoTickets"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedResumoTickets"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/categorias-evento": {
+      "get": {
+        "tags": [
+          "Evento"
+        ],
+        "summary": "Lista todas as categorias de evento disponíveis",
+        "description": "Lista todas as categorias de evento disponíveis para filtro e exibição. Endpoint público; coleção bounded (retorna página única).  Legado: `GET /api/v1/evento/categorias/publico` ",
+        "operationId": "listarCategoriasEvento",
+        "responses": {
+          "200": {
+            "description": "Lista de categorias",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedCategoria"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedCategoria"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit atingido.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/administrativo/repasses/eventos": {
+      "get": {
+        "tags": [
+          "Administrativo"
+        ],
+        "summary": "Lista eventos com resumo financeiro de repasses (visão admin)",
+        "description": "Lista paginada dos eventos com vendas, com os agregados financeiros de repasse por evento: total vendido (líquido de descontos, compras PAGO), total já repassado e saldo (quanto a Guedder deve ao evento).  Ordenação fixa (regra de produto, não parametrizável): 1. eventos com saldo a pagar (`saldo > 0`) primeiro; 2. depois por data de fim do evento em ordem crescente.  Requer role ADMIN. ",
+        "operationId": "listarResumoRepassesPorEvento",
+        "parameters": [
+          {
+            "name": "filtro",
+            "in": "query",
+            "description": "Filtro textual pelo nome do evento (match parcial, case-insensitive).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Número da página (0-based).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Registros por página.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 10,
+              "maximum": 100,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de eventos com resumo de repasses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEventoResumoRepasse"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEventoResumoRepasse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token válido mas sem permissão para o recurso.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v3/administrativo/locais-recentes": {
+      "get": {
+        "tags": [
+          "Administrativo"
+        ],
+        "summary": "Lista os últimos locais usados pelo produtor autenticado",
+        "description": "Retorna os locais de evento distintos mais recentes do Vendedor autenticado (dedup por lugar, mais novos primeiro, no máximo 5), para oferecer \"últimos locais usados\" na criação de evento. Ver ADR-0012.",
+        "operationId": "listarLocaisRecentes",
+        "responses": {
+          "200": {
+            "description": "Locais recentes do produtor (no máximo 5).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LocalEvento"
+                  }
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LocalEvento"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token válido mas sem permissão para o recurso.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PagedNotificationToken": {
+        "type": "object",
+        "description": "Página de tokens/dispositivos do usuário (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificationTokenEntity"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "ProblemDetail": {
+        "type": "object",
+        "description": "Resposta de erro HTTP conforme RFC 7807. Gerado nativamente pelo Spring 6+ via `@ControllerAdvice` + `ProblemDetail`. ",
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://api.guedder.com/problems/not-found"
+          },
+          "title": {
+            "type": "string",
+            "example": "Not Found"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "example": 404
+          },
+          "detail": {
+            "type": "string",
+            "example": "Evento com id 'abc123' não encontrado."
+          },
+          "instance": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://api.guedder.com/api/v3/eventos/abc123"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiFieldError"
+            }
+          }
+        }
+      },
+      "WalletConfig": {
+        "type": "object",
+        "description": "Configuração das carteiras digitais (Google Pay / Apple Pay) para inicialização dos botões de pagamento no client. Cada campo contém a config como uma string JSON. ",
+        "properties": {
+          "googlePay": {
+            "type": "string",
+            "description": "Configuração JSON do Google Pay, como string."
+          },
+          "applePay": {
+            "type": "string",
+            "description": "Configuração JSON do Apple Pay, como string."
+          }
+        }
+      },
+      "UsuarioEntity": {
+        "type": "object",
+        "description": "Perfil do usuário autenticado.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identificador do usuário."
+          },
+          "nome": {
+            "type": "string",
+            "description": "Primeiro nome."
+          },
+          "sobrenome": {
+            "type": "string",
+            "description": "Sobrenome."
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "E-mail do usuário."
+          },
+          "cpf": {
+            "type": "string",
+            "description": "CPF do usuário (quando informado)."
+          },
+          "telefone": {
+            "type": "string",
+            "description": "Telefone de contato (quando informado)."
+          },
+          "fotoUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL da foto de perfil."
+          },
+          "dataNascimento": {
+            "type": "string",
+            "format": "date",
+            "description": "Data de nascimento."
+          },
+          "nacionalidade": {
+            "type": "string",
+            "description": "Nacionalidade (quando informada)."
+          },
+          "role": {
+            "type": "string",
+            "description": "Papel do usuário no sistema.",
+            "enum": [
+              "USER",
+              "PRODUTOR",
+              "ADMIN",
+              "VENDEDOR"
+            ]
+          },
+          "vendedorId": {
+            "type": "string",
+            "description": "ID do perfil de vendedor associado, se houver."
+          },
+          "compradorId": {
+            "type": "string",
+            "description": "ID do perfil de comprador associado, se houver."
+          },
+          "canManageEvents": {
+            "type": "boolean",
+            "description": "Permissão para gerenciar eventos."
+          },
+          "canManageSales": {
+            "type": "boolean",
+            "description": "Permissão para gerenciar vendas."
+          },
+          "canCreateEvents": {
+            "type": "boolean",
+            "description": "Permissão para criar eventos."
+          },
+          "showPromoBottomSheet": {
+            "type": "boolean",
+            "description": "Flag de UI — exibir o bottom sheet promocional para este usuário."
+          },
+          "identidadeGenero": {
+            "$ref": "#/components/schemas/IdentidadeGeneroEnum",
+            "description": "Identidade de gênero do usuário."
+          },
+          "endereco": {
+            "$ref": "#/components/schemas/EnderecoEntity",
+            "description": "Endereço do usuário."
+          }
+        }
+      },
+      "PagedTransferenciaPendente": {
+        "type": "object",
+        "description": "Página de transferências pendentes (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransferenciaPendente"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "PagedStatusAssento": {
+        "type": "object",
+        "description": "Página de status de assentos (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusAssentoDto"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "LayoutConfig": {
+        "type": "object",
+        "description": "Configuração de layout dinâmico de uma página (lista ordenada de widgets).",
+        "properties": {
+          "layout": {
+            "type": "array",
+            "description": "Widgets a renderizar, na ordem de exibição.",
+            "items": {
+              "$ref": "#/components/schemas/LayoutItem"
+            }
+          }
+        }
+      },
+      "PagedIngresso": {
+        "type": "object",
+        "description": "Página de ingressos do comprador (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IngressoAssentoVO"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "PagedFotoCapa": {
+        "type": "object",
+        "description": "Página de eventos em destaque (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FotoCapaEvento"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "PagedEvento": {
+        "type": "object",
+        "description": "Página de eventos (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DadosBasicosEventoDto"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "DadosBasicosEventoDto": {
+        "type": "object",
+        "description": "Dados básicos de um evento.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identificador do evento."
+          },
+          "nome": {
+            "type": "string",
+            "description": "Nome do evento."
+          },
+          "local": {
+            "type": "string",
+            "description": "Local do evento em texto livre (legado; ver `localEvento` para dados estruturados)."
+          },
+          "descricao": {
+            "type": "string",
+            "description": "Descrição do evento."
+          },
+          "dataInicio": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora de início do evento."
+          },
+          "dataFim": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora de término do evento."
+          },
+          "dataCriacao": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora de criação do registro."
+          },
+          "ativo": {
+            "type": "boolean",
+            "description": "Indica se o evento está ativo."
+          },
+          "oculto": {
+            "type": "boolean",
+            "description": "Indica se o evento está oculto da listagem pública."
+          },
+          "verificado": {
+            "type": "boolean",
+            "description": "Indica se o evento foi verificado pela plataforma."
+          },
+          "bloqueado": {
+            "type": "boolean",
+            "description": "Indica se o evento está bloqueado."
+          },
+          "fotoEventoUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL da imagem de capa do evento."
+          },
+          "codigo": {
+            "type": "string",
+            "description": "Código alfanumérico do evento (alternativa ao ID na URL)."
+          },
+          "isTeatro": {
+            "type": "boolean",
+            "description": "Indica se o evento é do tipo teatro (com mapa de assentos)."
+          },
+          "metaPixelCode": {
+            "type": "string",
+            "description": "Código do Meta Pixel para rastreamento, se configurado."
+          },
+          "vendedorId": {
+            "type": "string",
+            "description": "ID do vendedor/produtor dono do evento."
+          },
+          "categoriaEvento": {
+            "$ref": "#/components/schemas/CategoriaEvento",
+            "description": "Categoria do evento."
+          },
+          "localEvento": {
+            "$ref": "#/components/schemas/LocalEvento",
+            "description": "Local estruturado do evento (coordenadas, endereço)."
+          }
+        }
+      },
+      "ParametrosVendaEvento": {
+        "type": "object",
+        "description": "Regras e formas de pagamento disponíveis para um evento.",
+        "properties": {
+          "aceitaPix": {
+            "type": "boolean",
+            "description": "Indica se o evento aceita pagamento via PIX."
+          },
+          "aceitaCartao": {
+            "type": "boolean",
+            "description": "Indica se o evento aceita pagamento via cartão."
+          },
+          "aceitaPaypal": {
+            "type": "boolean",
+            "description": "Indica se o evento aceita pagamento via PayPal."
+          },
+          "aceitaGooglePay": {
+            "type": "boolean",
+            "description": "Indica se o evento aceita Google Pay."
+          },
+          "aceitaApplePay": {
+            "type": "boolean",
+            "description": "Indica se o evento aceita Apple Pay."
+          },
+          "parcelasMaximas": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Número máximo de parcelas permitido (null = sem parcelamento)."
+          },
+          "taxaServicoPorcentagem": {
+            "type": "number",
+            "format": "double",
+            "description": "Percentual da taxa de serviço aplicada sobre a compra."
+          },
+          "valorMinimoCartao": {
+            "type": "number",
+            "format": "double",
+            "description": "Valor mínimo de compra para pagamento via cartão."
+          }
+        }
+      },
+      "PagedLote": {
+        "type": "object",
+        "description": "Página de lotes (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LoteEntity"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "LoteEntity": {
+        "type": "object",
+        "description": "Lote de ingressos de um evento.",
+        "properties": {
+          "oresIds": {
+            "$ref": "#/components/schemas/LoteEntity",
+            "writeOnly": true
+          },
+          "id": {
+            "type": "string",
+            "description": "Identificador do lote."
+          },
+          "nome": {
+            "type": "string",
+            "description": "Nome do lote."
+          },
+          "descricao": {
+            "type": "string",
+            "description": "Descrição do lote."
+          },
+          "estoqueInicial": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quantidade total de ingressos disponibilizada no lote."
+          },
+          "estoqueDisponivel": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quantidade de ingressos ainda disponíveis para venda."
+          },
+          "precoUnitario": {
+            "type": "number",
+            "format": "double",
+            "description": "Preço unitário do ingresso no lote."
+          },
+          "compraMinima": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quantidade mínima permitida para compra no lote. Por padrão é avaliada por carrinho. Quando `limitarPorCpf=true`, passa a ser exigida de forma cumulativa por CPF do comprador (compras pagas anteriores + compra atual). "
+          },
+          "compraMaxima": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quantidade máxima permitida para compra no lote. Por padrão é avaliada por carrinho. Quando `limitarPorCpf=true`, passa a também limitar o total de ingressos pagos que um mesmo CPF pode possuir neste lote (cumulativo). "
+          },
+          "limitarPorCpf": {
+            "type": "boolean",
+            "description": "CRS-449 / GUE-19: liga/desliga a aplicação cumulativa por CPF dos limites `compraMinima` / `compraMaxima`. Quando `false` (default, preserva lotes existentes), os limites valem apenas por carrinho. Quando `true`, são também exigidos de forma cumulativa por CPF do comprador. Espelha o \"botão limitar por CPF\" da UI. "
+          },
+          "inicioVendas": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora de abertura das vendas do lote."
+          },
+          "terminoVendas": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora de encerramento das vendas do lote."
+          },
+          "codigo": {
+            "type": "string",
+            "description": "Código alfanumérico do lote (alternativa ao ID)."
+          },
+          "privado": {
+            "type": "boolean",
+            "description": "Indica se o lote é privado (não listado publicamente)."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Substitui o campo `ativo` da v1/v2."
+          },
+          "disabledToBuy": {
+            "type": "boolean",
+            "description": "true quando o lote existe mas não pode ser comprado agora."
+          },
+          "indiceExibicao": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Ordem de exibição do lote na listagem."
+          },
+          "ingressosVendidos": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quantidade de ingressos já vendidos no lote."
+          },
+          "usoDeCupomObrigatorio": {
+            "type": "boolean",
+            "description": "Indica se a compra neste lote exige cupom."
+          },
+          "ocultarValor": {
+            "type": "boolean",
+            "description": "Indica se o valor do lote deve ficar oculto na exibição."
+          },
+          "taxaAmortecidaPeloProdutor": {
+            "type": "boolean",
+            "description": "GUE-182/GUE-191: quando `true`, o produtor amortiza a taxa de parcelamento deste lote — o valor do lote é excluído da base de cálculo do acréscimo de parcelamento (`CompraCalculator.calcularValorAmortecido`). Necessário para o front reproduzir localmente `valorAcrescimoMap` em carrinhos com lotes mistos. "
+          },
+          "parcelas": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Número máximo de parcelas permitido para o lote."
+          },
+          "link": {
+            "type": "string",
+            "format": "uri",
+            "description": "Link direto de compra do lote."
+          },
+          "eventoId": {
+            "type": "string",
+            "description": "ID do evento ao qual o lote pertence.",
+            "readOnly": true
+          },
+          "sessaoId": {
+            "type": "string",
+            "description": "ID da sessão à qual o lote se aplica, se específico."
+          },
+          "produtoId": {
+            "type": "string",
+            "description": "ID do produto associado ao lote, se houver."
+          },
+          "loteSucessorId": {
+            "type": "string",
+            "description": "ID do lote que sucede este quando o estoque acaba."
+          },
+          "embaixadorId": {
+            "type": "string",
+            "description": "ID do embaixador/afiliado vinculado ao lote, se houver."
+          },
+          "aplicavelEmTodasAsSessoes": {
+            "type": "boolean",
+            "description": "Indica se o lote vale para todas as sessões do evento."
+          },
+          "aplicavelEmTodosOsSetores": {
+            "type": "boolean",
+            "description": "Indica se o lote vale para todos os setores do evento."
+          },
+          "checkinRange": {
+            "$ref": "#/components/schemas/DateTimeRange",
+            "deprecated": true,
+            "description": "Mantido por compatibilidade. Para múltiplas janelas de check-in, usar `janelasCheckin`. "
+          },
+          "janelasCheckin": {
+            "type": "array",
+            "description": "Lista de janelas de check-in (1:N). Quando preenchido, tem precedência sobre `checkinRange` no fluxo de validação. ",
+            "items": {
+              "$ref": "#/components/schemas/JanelaCheckinDto"
+            }
+          },
+          "setoresIds": {
+            "type": "array",
+            "description": "IDs dos setores aos quais o lote se aplica (quando não vale para todos).",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "PagedIngressosCheckIn": {
+        "type": "object",
+        "description": "Página de ingressos para check-in (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IngressosCheckInDto"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "CupomValidacaoDto": {
+        "type": "object",
+        "description": "Resultado da validação de um cupom de desconto.",
+        "properties": {
+          "disponivel": {
+            "type": "boolean",
+            "description": "Indica se o cupom está disponível e aplicável."
+          },
+          "cupomId": {
+            "type": "string",
+            "description": "ID do cupom validado."
+          },
+          "nome": {
+            "type": "string",
+            "description": "Nome/código do cupom."
+          },
+          "tipoDesconto": {
+            "type": "string",
+            "description": "Tipo de desconto do cupom: `PERCENTUAL` (percentual sobre o valor) ou `FIXO` (valor fixo abatido). "
+          },
+          "valorDesconto": {
+            "type": "number",
+            "format": "double",
+            "description": "Valor do desconto aplicado pelo cupom."
+          },
+          "motivo": {
+            "type": "string",
+            "description": "Razão da indisponibilidade quando `disponivel=false`: COUPON_NOT_FOUND, COUPON_NOT_ACTIVE, COUPON_NOT_APPLICABLE, USER_LIMIT_REACHED, MAX_USES_REACHED. "
+          }
+        }
+      },
+      "PagedAtracao": {
+        "type": "object",
+        "description": "Página de atrações (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AtracaoDto"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "PagedResumoTickets": {
+        "type": "object",
+        "description": "Página do histórico de compras (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResumoTicketsVO"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "PagedCategoria": {
+        "type": "object",
+        "description": "Página de categorias de evento (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CategoriaEvento"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "PagedEventoResumoRepasse": {
+        "type": "object",
+        "description": "Página de resumos de repasse por evento (shape canônico Paged<T>).",
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventoResumoRepasse"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "content",
+          "page"
+        ]
+      },
+      "LocalEvento": {
+        "type": "object",
+        "description": "Local físico do evento, com coordenadas e dados do Google Places.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identificador do local."
+          },
+          "name": {
+            "type": "string",
+            "description": "Nome do local."
+          },
+          "apelido": {
+            "type": "string",
+            "description": "Nome de exibição escolhido pelo produtor; exibido no lugar de `name` quando presente. Ver Rótulo do Local (apelido → name → local)."
+          },
+          "lat": {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude do local."
+          },
+          "lng": {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude do local."
+          },
+          "placeId": {
+            "type": "string",
+            "description": "ID do local no Google Places."
+          },
+          "formattedAddress": {
+            "type": "string",
+            "description": "Endereço formatado retornado pelo Google."
+          },
+          "fotoMapaUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL da imagem estática do mapa."
+          },
+          "cidade": {
+            "type": "string",
+            "description": "Cidade do local (enviada pelo cliente; alimenta o filtro por cidade)."
+          },
+          "estado": {
+            "type": "string",
+            "description": "UF do local (sigla, ex. `SP`)."
+          },
+          "cep": {
+            "type": "string",
+            "description": "CEP do local; editável no modo \"sobrescrever\" do picker."
+          }
+        }
+      },
+      "NotificationTokenEntity": {
+        "type": "object",
+        "description": "Push token registrado para o usuário autenticado.",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "FCM (Android) ou APNs (iOS) push notification token.",
+            "example": "fCm_token_example_xyz"
+          },
+          "deviceName": {
+            "type": "string",
+            "description": "Nome do dispositivo informado pelo app no registro do token.",
+            "example": "iPhone de João"
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "PageInfo": {
+        "type": "object",
+        "description": "Metadados de paginação — superset do PageDTO v1/v2. Compatível com Spring Data `Page<T>` e Spring HATEOAS `PagedModel`. Campos existentes na v1/v2 (`totalElements`, `totalPages`, `size`, `number`) são mantidos; `numberOfElements`, `first`, `last`, `empty` são adicionados. ",
+        "properties": {
+          "totalElements": {
+            "type": "integer",
+            "format": "int64",
+            "example": 100
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32",
+            "example": 5
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32",
+            "example": 20
+          },
+          "number": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Número da página atual (0-based).",
+            "example": 0
+          },
+          "numberOfElements": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Número de elementos na página atual.",
+            "example": 20
+          },
+          "first": {
+            "type": "boolean",
+            "example": true
+          },
+          "last": {
+            "type": "boolean",
+            "example": false
+          },
+          "empty": {
+            "type": "boolean",
+            "example": false
+          }
+        },
+        "required": [
+          "number",
+          "size",
+          "totalElements",
+          "totalPages"
+        ]
+      },
+      "ApiFieldError": {
+        "type": "object",
+        "description": "Erro de validação associado a um campo específico.",
+        "properties": {
+          "field": {
+            "type": "string",
+            "example": "email"
+          },
+          "message": {
+            "type": "string",
+            "example": "deve ser um endereço de e-mail válido"
+          },
+          "rejectedValue": {
+            "type": "string",
+            "example": "not-an-email"
+          }
+        }
+      },
+      "IdentidadeGeneroEnum": {
+        "type": "object",
+        "description": "Identidade de gênero do usuário (valor enum + rótulo exibível).",
+        "properties": {
+          "enumValue": {
+            "type": "string",
+            "description": "Identificador enum da identidade de gênero."
+          },
+          "label": {
+            "type": "string",
+            "description": "Rótulo exibível da identidade de gênero."
+          }
+        }
+      },
+      "EnderecoEntity": {
+        "type": "object",
+        "description": "Endereço postal do usuário.",
+        "properties": {
+          "logradouro": {
+            "type": "string",
+            "description": "Nome da rua/avenida."
+          },
+          "numero": {
+            "type": "string",
+            "description": "Número do imóvel."
+          },
+          "complemento": {
+            "type": "string",
+            "description": "Complemento (apto, bloco etc.), opcional."
+          },
+          "bairro": {
+            "type": "string",
+            "description": "Bairro."
+          },
+          "cidade": {
+            "type": "string",
+            "description": "Cidade."
+          },
+          "estado": {
+            "type": "string",
+            "description": "Sigla da UF (ex: SP)."
+          },
+          "cep": {
+            "type": "string",
+            "description": "CEP (código postal)."
+          },
+          "pais": {
+            "type": "string",
+            "description": "País."
+          }
+        }
+      },
+      "TransferenciaPendente": {
+        "type": "object",
+        "description": "Transferência de ingresso pendente (enviada ou recebida).",
+        "properties": {
+          "ingressoId": {
+            "type": "string",
+            "description": "ID do ingresso em transferência."
+          },
+          "eventoId": {
+            "type": "string",
+            "description": "ID do evento do ingresso."
+          },
+          "nomeEvento": {
+            "type": "string",
+            "description": "Nome do evento."
+          },
+          "dataEvento": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora de início do evento."
+          },
+          "dataFimEvento": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora de término do evento."
+          },
+          "fotoCapaId": {
+            "type": "string",
+            "description": "ID da foto de capa do evento."
+          },
+          "totalIngressos": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quantidade de ingressos na transferência."
+          },
+          "isPortador": {
+            "type": "boolean",
+            "description": "true quando o usuário é o destinatário da transferência; false quando é o remetente. "
+          }
+        }
+      },
+      "StatusAssentoDto": {
+        "type": "object",
+        "description": "Status de um assento no mapa da sessão.",
+        "properties": {
+          "assentoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "DISPONIVEL (livre), RESERVADO (hold ativo), ATRIBUIDO (vendido), DESABILITADO (bloqueado).",
+            "enum": [
+              "DISPONIVEL",
+              "RESERVADO",
+              "ATRIBUIDO",
+              "DESABILITADO"
+            ]
+          }
+        },
+        "required": [
+          "assentoId",
+          "status"
+        ]
+      },
+      "LayoutItem": {
+        "type": "object",
+        "description": "Um widget do layout dinâmico da home. O campo `properties` é livre por design — cada `type` define suas próprias propriedades visuais (dimensões, margens, fontes etc.) via convenção de UI, não pelo contrato do backend. ",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Tipo de widget a renderizar.",
+            "enum": [
+              "text",
+              "carousel",
+              "spaceBox",
+              "categoriaFilter"
+            ]
+          },
+          "data": {
+            "type": "string",
+            "description": "Chave de i18n ou texto literal para widgets de tipo `text`."
+          },
+          "entity": {
+            "type": "string",
+            "description": "Nome do schema a deserializar em widgets de tipo `carousel`.",
+            "example": "DadosBasicosEventoDto"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "Path do endpoint a consultar para carregar o carousel.",
+            "example": "/api/v1/home/proximos/publico"
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Propriedades visuais livres por tipo de widget.",
+            "example": "{width=264, contentMargin=8, viewportFraction=0.8}"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "IngressoAssentoVO": {
+        "type": "object",
+        "description": "Representação completa de um ingresso do usuário (com dados do portador e do evento).",
+        "properties": {
+          "ingressoId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PAGO",
+              "PENDENTE",
+              "DEVOLUCAO",
+              "CANCELADO",
+              "NOVO",
+              "REPROVADO",
+              "ERRO"
+            ]
+          },
+          "nomeLote": {
+            "type": "string"
+          },
+          "nome": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "telefone": {
+            "type": "string"
+          },
+          "cpf": {
+            "type": "string"
+          },
+          "codigo": {
+            "type": "string"
+          },
+          "checkIn": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora do check-in realizado. null se ainda não fez check-in."
+          },
+          "eventoId": {
+            "type": "string"
+          },
+          "nomeEvento": {
+            "type": "string"
+          },
+          "dataInicioEvento": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dataFimEvento": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fotoEvento": {
+            "type": "string",
+            "format": "uri"
+          },
+          "localEvento": {
+            "type": "string"
+          },
+          "nomePortador": {
+            "type": "string",
+            "description": "Nome de quem está portando o ingresso (quando transferido)."
+          },
+          "enviado": {
+            "type": "boolean",
+            "description": "true se o ingresso foi transferido para outro usuário."
+          },
+          "recebido": {
+            "type": "boolean",
+            "description": "true se este ingresso foi recebido via transferência."
+          },
+          "fotoPortador": {
+            "type": "string",
+            "format": "uri"
+          },
+          "fotoComprador": {
+            "type": "string",
+            "format": "uri"
+          },
+          "codigoIngressoPortador": {
+            "type": "string",
+            "description": "Código do ingresso do portador atual (quando transferido)."
+          },
+          "transferenciaPendente": {
+            "type": "boolean"
+          },
+          "dataInicioSessao": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Início da sessão/horário (para eventos com múltiplas sessões)."
+          },
+          "dataFimSessao": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "nomeAssento": {
+            "type": "string",
+            "description": "Identificação do assento (para eventos tipo teatro)."
+          },
+          "assentoId": {
+            "type": "string"
+          },
+          "nomeSetor": {
+            "type": "string"
+          },
+          "ativo": {
+            "type": "boolean"
+          },
+          "inicioCheckin": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Abertura da janela de check-in legada. Mantido por compatibilidade retroativa para clientes que ainda não consomem `janelasCheckin`. "
+          },
+          "terminoCheckin": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Fechamento da janela de check-in legada. Mantido por compatibilidade retroativa para clientes que ainda não consomem `janelasCheckin`. "
+          },
+          "janelasCheckin": {
+            "type": "array",
+            "description": "Lista de janelas de check-in (1:N) configuradas no lote do ingresso. Quando preenchida, tem precedência sobre `inicioCheckin/terminoCheckin` no fluxo de validação. Vazia indica que o lote não tem janelas configuradas e o cliente deve usar o intervalo legado como fallback. ",
+            "items": {
+              "$ref": "#/components/schemas/JanelaCheckinDto"
+            }
+          }
+        },
+        "required": [
+          "ativo",
+          "codigo",
+          "dataFimEvento",
+          "dataInicioEvento",
+          "email",
+          "enviado",
+          "eventoId",
+          "ingressoId",
+          "inicioCheckin",
+          "localEvento",
+          "nome",
+          "nomeEvento",
+          "nomeLote",
+          "recebido",
+          "status",
+          "terminoCheckin",
+          "transferenciaPendente"
+        ]
+      },
+      "FotoCapaEvento": {
+        "type": "object",
+        "description": "Dados mínimos de um evento para exibição no carrossel de destaque.",
+        "properties": {
+          "eventoId": {
+            "type": "string",
+            "description": "Identificador do evento."
+          },
+          "nome": {
+            "type": "string",
+            "description": "Nome do evento."
+          },
+          "fotoUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL da imagem de destaque."
+          },
+          "link": {
+            "type": "string",
+            "description": "Link de destino opcional ao tocar no destaque."
+          }
+        }
+      },
+      "CategoriaEvento": {
+        "type": "object",
+        "description": "Categoria de um evento (para filtro e exibição).",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identificador da categoria."
+          },
+          "nome": {
+            "type": "string",
+            "description": "Nome interno da categoria."
+          },
+          "destaque": {
+            "type": "boolean",
+            "description": "Indica se a categoria aparece em destaque na navegação."
+          },
+          "categoriaEventoEnum": {
+            "type": "string",
+            "description": "Identificador enum da categoria (usado como filtro em listagens)."
+          },
+          "label": {
+            "type": "string",
+            "description": "Rótulo exibível da categoria."
+          }
+        }
+      },
+      "DateTimeRange": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "JanelaCheckinDto": {
+        "type": "object",
+        "description": "Janela de check-in associada a um lote. Suporta o fluxo 1:N de múltiplas janelas por lote (substitui o `checkinRange` legado, que é mantido por compatibilidade). ",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inicio": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Início da janela de check-in. Null indica sem limite inferior."
+          },
+          "fim": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Fim da janela de check-in. Null indica sem limite superior."
+          },
+          "label": {
+            "type": "string",
+            "description": "Rótulo opcional da janela."
+          }
+        }
+      },
+      "IngressosCheckInDto": {
+        "type": "object",
+        "description": "Dados de um ingresso para fins de check-in (visão do operador).",
+        "properties": {
+          "ingressoId": {
+            "type": "string"
+          },
+          "nomeParticipante": {
+            "type": "string"
+          },
+          "emailParticipante": {
+            "type": "string",
+            "format": "email"
+          },
+          "telefoneParticipante": {
+            "type": "string"
+          },
+          "nomeLote": {
+            "type": "string"
+          },
+          "dataCheckin": {
+            "type": "string",
+            "format": "date-time",
+            "description": "null se ainda não realizou check-in."
+          },
+          "operadorCheckin": {
+            "type": "string",
+            "description": "Identificação do operador que realizou o check-in."
+          },
+          "codigoIngresso": {
+            "type": "string"
+          },
+          "observacoes": {
+            "type": "string"
+          },
+          "janelasCheckin": {
+            "type": "array",
+            "description": "Janelas de check-in (1:N) configuradas no lote do ingresso. Vazio quando o lote usa o intervalo legado (`inicioCheckin`/`terminoCheckin`). ",
+            "items": {
+              "$ref": "#/components/schemas/JanelaCheckinDto"
+            }
+          }
+        },
+        "required": [
+          "codigoIngresso",
+          "emailParticipante",
+          "ingressoId",
+          "nomeLote"
+        ]
+      },
+      "AtracaoDto": {
+        "type": "object",
+        "description": "Atração (line-up) de um evento.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identificador da atração."
+          },
+          "nome": {
+            "type": "string",
+            "description": "Nome da atração/artista."
+          },
+          "fotoUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL da foto da atração."
+          },
+          "descricao": {
+            "type": "string",
+            "description": "Descrição opcional da atração."
+          }
+        }
+      },
+      "ResumoTicketsVO": {
+        "type": "object",
+        "description": "Resumo de uma compra no histórico do usuário.",
+        "properties": {
+          "eventoId": {
+            "type": "string",
+            "description": "Identificador do evento da compra."
+          },
+          "eventoNome": {
+            "type": "string",
+            "description": "Nome do evento."
+          },
+          "dataEvento": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora do evento."
+          },
+          "dataCompra": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Data/hora em que a compra foi realizada."
+          },
+          "total": {
+            "type": "number",
+            "format": "double",
+            "description": "Valor total pago na compra."
+          },
+          "quantidade": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Quantidade de ingressos na compra."
+          },
+          "status": {
+            "type": "string",
+            "description": "Status da compra."
+          },
+          "fotoEventoUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL da imagem de capa do evento."
+          }
+        }
+      },
+      "EventoResumoRepasse": {
+        "type": "object",
+        "description": "Resumo financeiro de repasses de um evento (visão administrativa). `totalVendido` é o valor transacionado (`SUM(compra.valor)`, com taxa, só compras PAGO); `saldo = repasseGeralGerado - totalRepassado` (quanto a Guedder deve ao evento; pode ser negativo se houve repasse a maior). Ver ADR-0011 para a semântica do `saldo` e da composição.  Os campos de composição (`repasseGerado`, `percentualCashback`, `cashbackGerado`, `patrocinio`, `repasseGeralGerado`) e o favorecido PIX (`chavePix`, `favorecido`) são nulláveis: o cliente exibe \"—\"/oculta quando ausentes, permitindo roll-out incremental. `repasseGeralGerado - totalRepassado` fecha com `saldo`.  `percentualCashback` é somente leitura aqui (GUE-223); a edição do valor é feita via `PATCH /api/v1/administrativo/evento/{id}/config` (`ConfiguracaoAdministrativaEventoDto`, fora deste contrato v3), onde é aceito/exibido como percentual (0-100) — aqui é exposto como fração (0.10 = 10%), a mesma unidade usada na fórmula do `cashbackGerado`. ",
+        "properties": {
+          "eventoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "nome": {
+            "type": "string",
+            "example": "Festival de Inverno"
+          },
+          "dataInicio": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dataFim": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "totalVendido": {
+            "type": "number",
+            "example": "15000.0"
+          },
+          "totalRepassado": {
+            "type": "number",
+            "example": "10000.0"
+          },
+          "saldo": {
+            "type": "number",
+            "example": "5000.0"
+          },
+          "repasseGerado": {
+            "type": "number",
+            "description": "Repasse gerado pelas vendas, antes de cashback/patrocínio (`SUM(valor_original) - SUM(valor_desconto)`, compras PAGO).",
+            "example": "14000.0"
+          },
+          "percentualCashback": {
+            "type": "number",
+            "description": "Percentual de cashback do evento, como fração (0.10 = 10%). Somente leitura; edição via `ConfiguracaoAdministrativaEventoDto`.",
+            "example": "0.05"
+          },
+          "cashbackGerado": {
+            "type": "number",
+            "description": "Cashback gerado no período (`repasseGerado × percentual_cashback`).",
+            "example": "700.0"
+          },
+          "patrocinio": {
+            "type": "number",
+            "description": "Patrocínio aportado. `null` quando não há.",
+            "example": "300.0"
+          },
+          "repasseGeralGerado": {
+            "type": "number",
+            "description": "Total geral a repassar (`repasseGerado × (1 + percentual_cashback) + patrocinio`). Fecha com `saldo + totalRepassado`.",
+            "example": "15000.0"
+          },
+          "chavePix": {
+            "type": "string",
+            "description": "Chave PIX do favorecido do repasse. `null` quando não cadastrada.",
+            "example": "eventos@produtora.com.br"
+          },
+          "favorecido": {
+            "type": "string",
+            "description": "Nome do favorecido da chave PIX. `null` quando não cadastrado.",
+            "example": "Produtora XYZ Ltda"
+          },
+          "valorOriginal": {
+            "type": "number",
+            "description": "Valor original somado (`SUM(compra.valor_original)`, compras PAGO valor > 0), base bruta do `repasseGerado` antes do desconto.",
+            "example": "15000.0"
+          },
+          "valorDesconto": {
+            "type": "number",
+            "description": "Desconto somado (`SUM(compra.valor_desconto)`, compras PAGO valor > 0).",
+            "example": "500.0"
+          },
+          "valorTaxa": {
+            "type": "number",
+            "description": "Taxa somada (`SUM(compra.valor_taxa)`, compras PAGO valor > 0). Não entra no cálculo do repasse.",
+            "example": "450.0"
+          },
+          "cashbackPatrocinio": {
+            "type": "number",
+            "description": "Soma de `patrocinio + cashbackGerado`.",
+            "example": "400.0"
+          },
+          "diasTerminado": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Dias desde o encerramento do evento (`now() - dataFim`). Negativo para eventos futuros.",
+            "example": -30
+          },
+          "encerrado": {
+            "type": "string",
+            "description": "`\"SIM\"` se `dataFim` já passou, senão `\"NÃO\"`.",
+            "example": "NÃO"
+          }
+        },
+        "required": [
+          "eventoId",
+          "nome",
+          "saldo",
+          "totalRepassado",
+          "totalVendido"
+        ]
+      }
+    }
+  }
+}
