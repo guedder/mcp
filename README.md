@@ -1,4 +1,4 @@
-# guedder-ops-mcp
+# @guedder/mcp
 
 Readonly MCP over the **Guedder API v3** for operational tasks. Thin wrappers over
 the public + produtor/admin GET endpoints. Streamable HTTP stateless server,
@@ -44,6 +44,12 @@ npm run smoke   # usa stdio apenas no smoke: lista tools e consulta endpoint pú
 npm run sync:openapi-v3  # atualiza src/openapi-v3.json a partir de dev-api.guedder.com
 ```
 
+Após a publicação, execute o servidor HTTP com:
+
+```bash
+GUEDDER_MCP_HOST=0.0.0.0 GUEDDER_BEARER_TOKEN=seu-token npx -y @guedder/mcp
+```
+
 ## Schema de saída e contexto
 
 Cada ferramenta devolve o JSON original em `content` e também em
@@ -80,7 +86,7 @@ Add to `~/.claude.json` (or project `.mcp.json`) under `mcpServers`:
 ```json
 {
   "mcpServers": {
-    "guedder-ops": {
+    "guedder": {
       "command": "node",
       "args": ["/Users/danilo/Work/DG/guedder/guedder-ops-mcp/dist/index.js"],
       "env": {

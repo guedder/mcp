@@ -1,22 +1,22 @@
 {
-  "name": "guedder-ops-mcp",
+  "name": "@guedder/mcp",
   "version": "0.1.0",
   "private": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/guedder/guedder-ops-mcp.git"
+    "url": "git+https://github.com/guedder/mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/guedder/guedder-ops-mcp/issues"
+    "url": "https://github.com/guedder/mcp/issues"
   },
-  "homepage": "https://github.com/guedder/guedder-ops-mcp#readme",
+  "homepage": "https://github.com/guedder/mcp#readme",
   "files": [
     "dist",
     "README.md",
     ".env.example"
   ],
   "type": "module",
-  "bin": { "guedder-ops-mcp": "dist/index.js" },
+  "bin": { "guedder-mcp": "dist/index.js" },
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc && cp src/openapi-v3.json dist/openapi-v3.json",

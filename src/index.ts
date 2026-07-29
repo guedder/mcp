@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * guedder-ops-mcp — readonly MCP over Guedder API v3 (operational tasks).
+ * @guedder/mcp — readonly MCP over Guedder API v3 (operational tasks).
  *
  * Auth: a caller-provided Bearer token (`GUEDDER_BEARER_TOKEN`) is forwarded only
  * to authenticated endpoints. OAuth2 can later replace tokenProvider() without
