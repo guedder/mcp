@@ -10,6 +10,11 @@
     "url": "https://github.com/guedder/guedder-ops-mcp/issues"
   },
   "homepage": "https://github.com/guedder/guedder-ops-mcp#readme",
+  "files": [
+    "dist",
+    "README.md",
+    ".env.example"
+  ],
   "type": "module",
   "bin": { "guedder-ops-mcp": "dist/index.js" },
   "engines": { "node": ">=20" },
