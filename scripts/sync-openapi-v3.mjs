@@ -3,6 +3,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 const SOURCE = process.env.GUEDDER_OPENAPI_URL ?? "https://dev-api.guedder.com/v3/api-docs";
 const TARGET = new URL("../src/openapi-v3.json", import.meta.url);
 const METHODS = new Set(["get"]);
+// Mantém a superfície v3 enxuta e acrescenta somente os GETs legados de gestão
+// ainda consolidados. Isso evita entregar o OpenAPI inteiro ao harness.
+const MANAGEMENT_LEGACY_PATHS = new Set([
+  "/api/v2/compra/evento/{eventoId}/extrato",
+  "/api/v1/metrica/{eventoId}/ultimas-vendas",
+  "/api/v1/metrica/{eventoId}/resumo-vendas",
+  "/api/v1/administrativo/gateway-adquirentes",
+]);
 
 function collectRefs(value, refs) {
   if (Array.isArray(value)) return value.forEach((item) => collectRefs(item, refs));
@@ -20,7 +28,7 @@ if (!response.ok) throw new Error(`OpenAPI indisponível: ${response.status} ${r
 const source = await response.json();
 const paths = Object.fromEntries(
   Object.entries(source.paths)
-    .filter(([path]) => path.startsWith("/api/v3/"))
+    .filter(([path]) => path.startsWith("/api/v3/") || MANAGEMENT_LEGACY_PATHS.has(path))
     .map(([path, operations]) => [
       path,
       Object.fromEntries(Object.entries(operations).filter(([method]) => METHODS.has(method))),

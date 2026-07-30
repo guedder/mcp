@@ -80,6 +80,12 @@ quando precisar atualizar os schemas antes de publicar uma nova versão do MCP.
 | `guedder_buscar_ingressos_evento` | ✅ | `GET /api/v3/ingresso/{eventoId}/buscar` (MCP: `max_results`, sempre página 0) |
 | `guedder_meus_ingressos` | ✅ | `GET /api/v3/ingresso/meus_ingressos/todos` |
 | `guedder_minhas_compras` | ✅ | `GET /api/v3/minhas_compras` (MCP: `max_results`, sempre página 0) |
+| `guedder_buscar_compras_evento` | ✅ | `GET /api/v2/compra/evento/{eventoId}/extrato` (MCP: `max_results`, sempre página 0) |
+| `guedder_auditar_vendas_evento` | ✅ | `GET /api/v1/metrica/{eventoId}/ultimas-vendas` (auditoria operacional; MCP: `max_results`, sempre página 0) |
+| `guedder_resumo_vendas_evento` | ✅ | `GET /api/v1/metrica/{eventoId}/resumo-vendas` |
+| `guedder_listar_integracoes_pagamento` | ✅ ADMIN | `GET /api/v1/administrativo/gateway-adquirentes` (MCP: `max_results`, sempre página 0) |
+| `guedder_listar_resumo_repasses_eventos` | ✅ ADMIN | `GET /api/v3/administrativo/repasses/eventos` (MCP: `max_results`, sempre página 0) |
+| `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
 | `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/usuario_logado` |
 
 ## Cliente MCP local (stdio opcional)

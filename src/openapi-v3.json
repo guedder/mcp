@@ -1555,6 +1555,201 @@
           }
         ]
       }
+    },
+    "/api/v2/compra/evento/{eventoId}/extrato": {
+      "get": {
+        "tags": [
+          "compra-controller-v-2"
+        ],
+        "operationId": "findExtratosByEvento",
+        "parameters": [
+          {
+            "name": "filtro",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "PAGO",
+                  "PENDENTE",
+                  "CANCELADA",
+                  "PEDIDO_ESTORNO",
+                  "ESTORNADA",
+                  "NOVA",
+                  "REPROVADA",
+                  "EXPIRADA",
+                  "CHARGEBACK",
+                  "ERRO",
+                  "PENDENTE_3DS"
+                ]
+              }
+            }
+          },
+          {
+            "name": "eventoId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pageable",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Pageable"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestObject"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/metrica/{eventoId}/ultimas-vendas": {
+      "get": {
+        "tags": [
+          "metrica-evento-controller"
+        ],
+        "operationId": "getContagemIngressosVendidos",
+        "parameters": [
+          {
+            "name": "eventoId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pageable",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Pageable"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestObject"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/metrica/{eventoId}/resumo-vendas": {
+      "get": {
+        "tags": [
+          "metrica-evento-controller"
+        ],
+        "operationId": "getResumoVendas",
+        "parameters": [
+          {
+            "name": "eventoId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestObject"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/administrativo/gateway-adquirentes": {
+      "get": {
+        "tags": [
+          "administrativo-controller"
+        ],
+        "operationId": "getGatewaysAdquirentes_1",
+        "parameters": [
+          {
+            "name": "metodoPagamento",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "VISA",
+                "MASTERCARD",
+                "ELO",
+                "AMEX",
+                "DINERS",
+                "DISCOVER",
+                "HIPERCARD",
+                "HIPER",
+                "JCB",
+                "AURA",
+                "PIX",
+                "GOOGLE_PAY",
+                "APPLE_PAY",
+                "PAYPAL"
+              ]
+            }
+          },
+          {
+            "name": "pageable",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Pageable"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestObject"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2301,6 +2496,36 @@
           "cep": {
             "type": "string",
             "description": "CEP do local; editável no modo \"sobrescrever\" do picker."
+          }
+        }
+      },
+      "Pageable": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RestObject": {
+        "type": "object",
+        "additionalProperties": {},
+        "properties": {
+          "empty": {
+            "type": "boolean"
           }
         }
       },

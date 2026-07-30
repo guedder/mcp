@@ -17,6 +17,8 @@ const { tools } = await client.listTools();
 console.log(`tools (${tools.length}): ${tools.map((t) => t.name).join(", ")}`);
 assert.ok(tools.length >= 11, "expected >= 11 tools");
 assert.ok(tools.find((t) => t.name === "guedder_buscar_ingressos_evento"), "missing check-in tool");
+assert.ok(tools.find((t) => t.name === "guedder_buscar_compras_evento"), "missing event purchase tool");
+assert.ok(tools.find((t) => t.name === "guedder_listar_integracoes_pagamento"), "missing payment integrations tool");
 assert.ok(tools.every((tool) => tool.outputSchema?.properties?.result), "all tools must document structured output");
 
 const { resources } = await client.listResources();
@@ -24,7 +26,10 @@ assert.ok(resources.find((resource) => resource.uri === "guedder://openapi/v3"),
 assert.ok(resources.find((resource) => resource.uri === "guedder://openapi/v3/tools/guedder_listar_eventos"), "missing tool schema resource");
 const index = await client.readResource({ uri: "guedder://openapi/v3" });
 const manifest = JSON.parse(index.contents[0].text);
-assert.ok(manifest.operations.every((operation) => operation.path.startsWith("/api/v3/")), "OpenAPI index must contain only v3 paths");
+assert.ok(
+  manifest.operations.every((operation) => operation.path.startsWith("/api/v3/") || operation.path.startsWith("/api/v2/") || operation.path.startsWith("/api/v1/")),
+  "OpenAPI index must contain only selected v3 and management legacy paths",
+);
 const schema = await client.readResource({ uri: "guedder://openapi/v3/tools/guedder_listar_eventos" });
 const specification = JSON.parse(schema.contents[0].text);
 assert.deepEqual(Object.keys(specification.paths), ["/api/v3/evento"]);

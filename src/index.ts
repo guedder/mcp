@@ -6,7 +6,7 @@
  * to authenticated endpoints. OAuth2 can later replace tokenProvider() without
  * changing the tools or the HTTP client.
  *
- * ponytail: 11 thin readonly wrappers, one generic GET client, token cached + 401 re-login.
+ * 17 thin readonly wrappers, one generic GET client and a bearer token provider.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -241,6 +241,87 @@ const TOOLS: Tool[] = [
     },
     auth: true,
     build: (a) => ({ path: "/api/v3/minhas_compras", query: { page: 0, size: a.max_results, sort: a.sort } }),
+  },
+  {
+    name: "guedder_buscar_compras_evento",
+    title: "Buscar compras de um evento",
+    description:
+      "Extrato de compras de um evento para gestão de vendas. Filtre por texto e status; retorna até max_results da primeira página. Requer permissão sobre o evento.",
+    openApiOperationId: "findExtratosByEvento",
+    inputSchema: {
+      eventoId: z.string().describe("UUID do evento"),
+      filtro: z.string().optional().describe("Busca textual no extrato"),
+      status: z.array(z.string()).optional().describe("Status de compra, ex.: PAGO ou PENDENTE"),
+      max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de compras retornadas; máximo 100"),
+    },
+    auth: true,
+    build: (a) => ({
+      path: `/api/v2/compra/evento/${enc(a.eventoId)}/extrato`,
+      query: { filtro: a.filtro, status: a.status?.join(","), page: 0, size: a.max_results },
+    }),
+  },
+  {
+    name: "guedder_auditar_vendas_evento",
+    title: "Auditar vendas recentes do evento",
+    description:
+      "Retorna as vendas recentes de um evento para auditoria operacional. Não é uma trilha de alterações do evento; requer permissão de leitura de vendas.",
+    openApiOperationId: "getContagemIngressosVendidos",
+    inputSchema: {
+      eventoId: z.string().describe("UUID do evento"),
+      max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de vendas retornadas; máximo 100"),
+    },
+    auth: true,
+    build: (a) => ({ path: `/api/v1/metrica/${enc(a.eventoId)}/ultimas-vendas`, query: { page: 0, size: a.max_results } }),
+  },
+  {
+    name: "guedder_resumo_vendas_evento",
+    title: "Resumo de vendas do evento",
+    description: "Agregados de vendas de um evento para gestão. Requer permissão de leitura de vendas.",
+    openApiOperationId: "getResumoVendas",
+    inputSchema: { eventoId: z.string().describe("UUID do evento") },
+    auth: true,
+    build: (a) => ({ path: `/api/v1/metrica/${enc(a.eventoId)}/resumo-vendas` }),
+  },
+  {
+    name: "guedder_listar_integracoes_pagamento",
+    title: "Listar integrações de pagamento",
+    description:
+      "Lista as integrações de adquirentes/gateways configuradas, opcionalmente por método de pagamento. Requer role ADMIN.",
+    openApiOperationId: "getGatewaysAdquirentes_1",
+    inputSchema: {
+      metodoPagamento: z.string().optional().describe("Método de pagamento para filtrar as integrações"),
+      max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de integrações retornadas; máximo 100"),
+    },
+    auth: true,
+    build: (a) => ({
+      path: "/api/v1/administrativo/gateway-adquirentes",
+      query: { metodoPagamento: a.metodoPagamento, page: 0, size: a.max_results },
+    }),
+  },
+  {
+    name: "guedder_listar_resumo_repasses_eventos",
+    title: "Resumo financeiro de repasses por evento",
+    description:
+      "Lista eventos com total vendido, total repassado e saldo de repasse. Requer role ADMIN; retorna até max_results da primeira página.",
+    openApiOperationId: "listarResumoRepassesPorEvento",
+    inputSchema: {
+      filtro: z.string().optional().describe("Filtro parcial pelo nome do evento"),
+      max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de eventos retornados; máximo 100"),
+    },
+    auth: true,
+    build: (a) => ({
+      path: "/api/v3/administrativo/repasses/eventos",
+      query: { filtro: a.filtro, page: 0, size: a.max_results },
+    }),
+  },
+  {
+    name: "guedder_listar_locais_recentes",
+    title: "Listar locais recentes do produtor",
+    description: "Lista, no máximo, cinco locais de evento usados recentemente pelo produtor autenticado. Requer role ADMIN.",
+    openApiOperationId: "listarLocaisRecentes",
+    inputSchema: {},
+    auth: true,
+    build: () => ({ path: "/api/v3/administrativo/locais-recentes" }),
   },
   {
     name: "guedder_usuario_logado",
