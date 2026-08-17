@@ -33,13 +33,32 @@ async function ambiente() {
   return { verify, emitir };
 }
 
+// Só `custom:role`, sem `custom:is_admin`: é exatamente o que a Pre-Token
+// Lambda emite. A versão anterior forjava as duas claims e por isso passava
+// verde com o código lendo a que nunca chega em token real.
 test("token válido devolve a identidade do usuário", async () => {
   const { verify, emitir } = await ambiente();
-  const caller = await verify(`Bearer ${await emitir({ "custom:is_admin": true, "custom:role": "ADMIN" })}`);
+  const caller = await verify(`Bearer ${await emitir({ "custom:role": "ADMIN" })}`);
 
   assert.equal(caller.email, "suporte@guedder.com");
   assert.equal(caller.isAdmin, true);
   assert.equal(caller.role, "ADMIN");
+});
+
+test("papel não-admin não abre a auditoria", async () => {
+  const { verify, emitir } = await ambiente();
+
+  for (const role of ["PRODUTOR", "USER"]) {
+    const caller = await verify(`Bearer ${await emitir({ "custom:role": role })}`);
+    assert.equal(caller.isAdmin, false, `${role} não pode ser admin`);
+    assert.equal(caller.role, role);
+  }
+
+  // Token sem `custom:*` (Pre-Token falhou ou usuário não está no Postgres):
+  // fecha o portão em vez de assumir qualquer coisa.
+  const semClaims = await verify(`Bearer ${await emitir({})}`);
+  assert.equal(semClaims.isAdmin, false);
+  assert.equal(semClaims.role, undefined);
 });
 
 test("token de outro client é recusado", async () => {

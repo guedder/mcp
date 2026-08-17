@@ -62,12 +62,19 @@ export function createVerifier(cfg: AuthConfig) {
     const email = (payload.email ?? payload["cognito:username"]) as string | undefined;
     if (!email) throw new AuthError("Token sem email — não dá para resolver o usuário.");
 
+    const role = payload["custom:role"] as string | undefined;
+
     return {
       token,
       email,
       usuarioId: payload["custom:usuario_id"] as string | undefined,
-      role: payload["custom:role"] as string | undefined,
-      isAdmin: payload["custom:is_admin"] === true || payload["custom:is_admin"] === "true",
+      role,
+      // A Pre-Token Lambda NUNCA emite `custom:is_admin` — ela copia `role` da
+      // coluna `usuario.role` (UserRole: ADMIN | PRODUTOR | USER). Ler
+      // `custom:is_admin` deixava isAdmin sempre false, fechando a auditoria
+      // até para admin. Passou despercebido porque enquanto o Postgres estava
+      // inalcançável nenhum token trazia `custom:*`, e a recusa parecia certa.
+      isAdmin: role === "ADMIN",
     };
   };
 }
