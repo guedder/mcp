@@ -8,7 +8,7 @@ test("encaminha o bearer token aos endpoints autenticados", async () => {
   const server = http.createServer((request, response) => {
     assert.equal(request.headers.authorization, "Bearer token-de-teste");
     response.writeHead(200, { "content-type": "application/json" });
-    if (request.url === "/api/v3/usuarios/usuario_logado") {
+    if (request.url === "/api/v3/usuarios/perfil") {
       response.end(JSON.stringify({ id: "usuario-teste" }));
       return;
     }

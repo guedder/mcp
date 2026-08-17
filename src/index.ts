@@ -349,7 +349,10 @@ const TOOLS: Tool[] = [
     openApiOperationId: "getUsuarioLogado",
     inputSchema: {},
     auth: true,
-    build: () => ({ path: "/api/v3/usuarios/usuario_logado" }),
+    // `usuario_logado` é o nome da rota em v1; em v3 a mesma operação
+    // (getUsuarioLogado) foi renomeada para /perfil. O path errado passava batido
+    // porque o 404 vinha depois do auth — só aparece com token válido.
+    build: () => ({ path: "/api/v3/usuarios/perfil" }),
   },
 ];
 
