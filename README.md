@@ -88,6 +88,32 @@ quando precisar atualizar os schemas antes de publicar uma nova versão do MCP.
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
 | `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/usuario_logado` |
 
+## Validação em staging
+
+`test/validar-staging.mjs` sobe o servidor com a configuração real de staging e exercita as
+três camadas que só se provam juntas: identidade (token do Cognito), acesso à API (token
+repassado) e auditoria (credencial AWS do servidor, não do usuário).
+
+```bash
+node test/validar-staging.mjs                        # sem token: valida o que dá
+TOKEN=eyJ... ID_PEDIDO=5daig7vi11 node test/validar-staging.mjs   # ponta a ponta
+```
+
+Sem `TOKEN` ele valida a camada de identidade — metadata, 401 com `WWW-Authenticate`, recusa de
+token inválido — e marca o resto como **pulado**, nunca como sucesso.
+
+O token vem de um login humano: o consent do Google é anti-bot por design, e senha não passa
+pelo script. Abra a Hosted UI, troque o `code` e passe o `access_token`:
+
+```
+https://guedder-auth-staging.auth.us-east-1.amazoncognito.com/oauth2/authorize
+  ?client_id=3ano9ppcdnf5ikuk22mgjvo62h&response_type=code&scope=openid+profile+email
+  &redirect_uri=http://localhost:6274/oauth/callback
+```
+
+As tools de auditoria exigem perfil administrativo; com token de usuário comum o script trata o
+"acesso negado" como **comportamento esperado**, não como falha.
+
 ## Cliente MCP local (stdio opcional)
 
 Add to `~/.claude.json` (or project `.mcp.json`) under `mcpServers`:
