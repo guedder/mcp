@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RastrearCompraNosLogs",
+      "Effect": "Allow",
+      "Action": ["logs:StartQuery"],
+      "Resource": [
+        "arn:aws:logs:us-west-2:851725365475:log-group:/ecs/guedder:*"
+      ]
+    },
+    {
+      "Sid": "LerResultadoDaConsulta",
+      "Effect": "Allow",
+      "Action": ["logs:GetQueryResults", "logs:StopQuery"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "MapaDeServicosDoTrace",
+      "Effect": "Allow",
+      "Action": ["xray:BatchGetTraces", "xray:GetTraceSummaries"],
+      "Resource": "*"
+    }
+  ]
+}

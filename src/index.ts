@@ -14,6 +14,15 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
+import {
+  AuthError,
+  authConfigFromEnv,
+  createVerifier,
+  protectedResourceMetadata,
+  wwwAuthenticate,
+  type Caller,
+} from "./auth.js";
+import { auditoriaConfigFromEnv, criarAuditoria } from "./auditoria.js";
 
 const BASE = (process.env.GUEDDER_API_BASE ?? "https://api.guedder.com").replace(/\/+$/, "");
 const BEARER_TOKEN = process.env.GUEDDER_BEARER_TOKEN?.trim();
@@ -26,7 +35,17 @@ const TOOL_OUTPUT_SCHEMA = z.object({
   result: z.unknown().describe("Resultado bruto da API Guedder. O schema detalhado está em guedder://openapi/v3."),
 });
 
-async function tokenProvider(): Promise<string> {
+const AUTH = authConfigFromEnv();
+const AUDITORIA_CFG = auditoriaConfigFromEnv();
+const auditoria = AUDITORIA_CFG ? criarAuditoria(AUDITORIA_CFG) : null;
+const verifyToken = AUTH ? createVerifier(AUTH) : null;
+
+/**
+ * Token repassado à API Guedder. Com Cognito ligado é o do próprio usuário, vindo do request
+ * MCP; sem ele, cai no token estático de processo (stdio local e smoke).
+ */
+async function tokenProvider(caller?: Caller): Promise<string> {
+  if (caller) return caller.token;
   if (!BEARER_TOKEN) {
     throw new Error(
       "Endpoint autenticado: defina GUEDDER_BEARER_TOKEN na configuração do MCP.",
@@ -37,7 +56,7 @@ async function tokenProvider(): Promise<string> {
 
 async function apiGet(
   path: string,
-  opts: { query?: Record<string, unknown>; auth?: boolean } = {},
+  opts: { query?: Record<string, unknown>; auth?: boolean; caller?: Caller } = {},
 ): Promise<unknown> {
   const url = new URL(BASE + path);
   for (const [k, v] of Object.entries(opts.query ?? {})) {
@@ -45,7 +64,7 @@ async function apiGet(
   }
   const run = async () => {
     const headers: Record<string, string> = { accept: "application/json" };
-    if (opts.auth) headers.authorization = `Bearer ${await tokenProvider()}`;
+    if (opts.auth) headers.authorization = `Bearer ${await tokenProvider(opts.caller)}`;
     return fetch(url, { headers });
   };
   let res = await run();
@@ -334,7 +353,7 @@ const TOOLS: Tool[] = [
   },
 ];
 
-function createMcpServer(): McpServer {
+function createMcpServer(caller?: Caller): McpServer {
   const server = new McpServer({ name: "guedder-ops", version: "0.1.0" });
   server.registerResource(
     "guedder_openapi_v3_index",
@@ -379,7 +398,7 @@ function createMcpServer(): McpServer {
       async (args: any) => {
         try {
           const { path, query } = t.build(args ?? {});
-          const data = await apiGet(path, { query, auth: t.auth });
+          const data = await apiGet(path, { query, auth: t.auth, caller });
           return {
             structuredContent: { result: data },
             content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -390,19 +409,128 @@ function createMcpServer(): McpServer {
       },
     );
   }
+
+  // Auditoria: única tool que não age como o usuário — ela usa a credencial AWS da task.
+  // Por isso o portão é aqui e não na API: a API não está no caminho (ADR 0001 §9.7).
+  if (auditoria) {
+    server.registerTool(
+      "guedder_rastrear_compra",
+      {
+        title: "Rastrear compra no log",
+        description:
+          "Correlaciona uma compra com o rastro dela na plataforma. Informe o id do pedido, o id da compra OU um trace_id. " +
+          "Devolve a linha do tempo do request, com campos recortados. Requer perfil administrativo.",
+        inputSchema: {
+          identificador: z
+            .string()
+            .describe("id do pedido, id da compra ou trace_id. Sem curingas."),
+          max_linhas: z
+            .number()
+            .int()
+            .positive()
+            .max(200)
+            .optional()
+            .describe("Teto de linhas devolvidas."),
+        },
+        outputSchema: TOOL_OUTPUT_SCHEMA,
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      },
+      async (args: any) => {
+        try {
+          if (AUTH && !caller?.isAdmin) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: "Acesso negado: rastreio de log exige perfil administrativo.",
+                },
+              ],
+              isError: true,
+            };
+          }
+          const identificador = String(args?.identificador ?? "");
+          // trace_id do OTel é hex de 32; qualquer outra coisa passa pela busca da âncora.
+          const traceId = /^[0-9a-f]{32}$/i.test(identificador.trim())
+            ? identificador.trim()
+            : await auditoria.traceDoIdentificador(identificador);
+
+          if (!traceId) {
+            const data = {
+              encontrado: false,
+              motivo:
+                "Nenhuma linha de log com esse identificador na janela consultada. Confirme o id, ou informe o trace_id diretamente.",
+            };
+            return {
+              structuredContent: { result: data },
+              content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+            };
+          }
+
+          const linhas = await auditoria.linhasDoTrace(traceId, args?.max_linhas);
+          const data = { encontrado: true, trace_id: traceId, linhas };
+          return {
+            structuredContent: { result: data },
+            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+          };
+        } catch (e: any) {
+          return {
+            content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }],
+            isError: true,
+          };
+        }
+      },
+    );
+  }
+
   return server;
 }
 
+const METADATA_PATH = "/.well-known/oauth-protected-resource";
+
 async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const pathname = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`).pathname;
+  const base = `http://${req.headers.host ?? "localhost"}`;
+  const pathname = new URL(req.url ?? "/", base).pathname;
+
+  // RFC 9728: o cliente MCP lê isto depois do 401 para saber onde autenticar.
+  if (AUTH && pathname === METADATA_PATH) {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(protectedResourceMetadata(AUTH), null, 2));
+    return;
+  }
+
   if (pathname !== MCP_PATH) {
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "Endpoint MCP não encontrado." }));
     return;
   }
 
+  // Identidade do chamador. Sem Cognito configurado o servidor segue no modo antigo.
+  let caller: Caller | undefined;
+  if (AUTH && verifyToken) {
+    try {
+      caller = await verifyToken(req.headers.authorization);
+    } catch (e) {
+      const metadataUrl = `${req.headers["x-forwarded-proto"] ?? "http"}://${req.headers.host ?? "localhost"}${METADATA_PATH}`;
+      res.writeHead(401, {
+        "content-type": "application/json",
+        "www-authenticate": wwwAuthenticate(AUTH, metadataUrl),
+      });
+      res.end(
+        JSON.stringify({
+          error: e instanceof AuthError ? e.message : "Não autenticado.",
+        }),
+      );
+      return;
+    }
+  }
+
   // Stateless MCP: cada requisição recebe um servidor/transport novo e não há sessão em memória.
-  const server = createMcpServer();
+  const server = createMcpServer(caller);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   try {
     await server.connect(transport);
