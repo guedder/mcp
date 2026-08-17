@@ -30,6 +30,7 @@
     "sync:openapi-v3": "node scripts/sync-openapi-v3.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch-logs": "^3.1111.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "jose": "^6.2.9",
     "zod": "^3.23.8"

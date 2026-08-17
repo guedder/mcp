@@ -22,6 +22,7 @@ import {
   wwwAuthenticate,
   type Caller,
 } from "./auth.js";
+import { auditoriaConfigFromEnv, criarAuditoria } from "./auditoria.js";
 
 const BASE = (process.env.GUEDDER_API_BASE ?? "https://api.guedder.com").replace(/\/+$/, "");
 const BEARER_TOKEN = process.env.GUEDDER_BEARER_TOKEN?.trim();
@@ -35,6 +36,8 @@ const TOOL_OUTPUT_SCHEMA = z.object({
 });
 
 const AUTH = authConfigFromEnv();
+const AUDITORIA_CFG = auditoriaConfigFromEnv();
+const auditoria = AUDITORIA_CFG ? criarAuditoria(AUDITORIA_CFG) : null;
 const verifyToken = AUTH ? createVerifier(AUTH) : null;
 
 /**
@@ -406,6 +409,84 @@ function createMcpServer(caller?: Caller): McpServer {
       },
     );
   }
+
+  // Auditoria: única tool que não age como o usuário — ela usa a credencial AWS da task.
+  // Por isso o portão é aqui e não na API: a API não está no caminho (ADR 0001 §9.7).
+  if (auditoria) {
+    server.registerTool(
+      "guedder_rastrear_compra",
+      {
+        title: "Rastrear compra no log",
+        description:
+          "Correlaciona uma compra com o rastro dela na plataforma. Informe o id do pedido, o id da compra OU um trace_id. " +
+          "Devolve a linha do tempo do request, com campos recortados. Requer perfil administrativo.",
+        inputSchema: {
+          identificador: z
+            .string()
+            .describe("id do pedido, id da compra ou trace_id. Sem curingas."),
+          max_linhas: z
+            .number()
+            .int()
+            .positive()
+            .max(200)
+            .optional()
+            .describe("Teto de linhas devolvidas."),
+        },
+        outputSchema: TOOL_OUTPUT_SCHEMA,
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
+      },
+      async (args: any) => {
+        try {
+          if (AUTH && !caller?.isAdmin) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: "Acesso negado: rastreio de log exige perfil administrativo.",
+                },
+              ],
+              isError: true,
+            };
+          }
+          const identificador = String(args?.identificador ?? "");
+          // trace_id do OTel é hex de 32; qualquer outra coisa passa pela busca da âncora.
+          const traceId = /^[0-9a-f]{32}$/i.test(identificador.trim())
+            ? identificador.trim()
+            : await auditoria.traceDoIdentificador(identificador);
+
+          if (!traceId) {
+            const data = {
+              encontrado: false,
+              motivo:
+                "Nenhuma linha de log com esse identificador na janela consultada. Confirme o id, ou informe o trace_id diretamente.",
+            };
+            return {
+              structuredContent: { result: data },
+              content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+            };
+          }
+
+          const linhas = await auditoria.linhasDoTrace(traceId, args?.max_linhas);
+          const data = { encontrado: true, trace_id: traceId, linhas };
+          return {
+            structuredContent: { result: data },
+            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+          };
+        } catch (e: any) {
+          return {
+            content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }],
+            isError: true,
+          };
+        }
+      },
+    );
+  }
+
   return server;
 }
 
