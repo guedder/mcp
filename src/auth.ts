@@ -24,6 +24,11 @@ export type AuthConfig = {
   resource: string;
   /** client_id do App Client do agente. Token de outro client é recusado. */
   clientId?: string;
+  /**
+   * Escopos que o APP CLIENT permite — que não é o mesmo que o pool suporta.
+   * Ver `authorizationServerMetadata` para o porquê de a diferença importar.
+   */
+  scopes?: string[];
   getKey?: JWTVerifyGetKey;
 };
 
@@ -34,6 +39,7 @@ export function authConfigFromEnv(): AuthConfig | null {
     issuer,
     resource: process.env.GUEDDER_MCP_RESOURCE?.trim() || "https://mcp.guedder.com/mcp",
     clientId: process.env.GUEDDER_MCP_CLIENT_ID?.trim() || undefined,
+    scopes: (process.env.GUEDDER_MCP_SCOPES?.trim() || "openid email profile").split(/\s+/),
   };
 }
 
@@ -161,6 +167,15 @@ export async function authorizationServerMetadata(
     authorization_endpoint: `${base}/authorize`,
     token_endpoint: `${base}/token`,
     registration_endpoint: `${base}/register`,
+    // `scopes_supported` do documento do Cognito é do POOL, e o pool suporta mais
+    // do que o app client permite. Repassá-lo fez o cliente pedir
+    // `openid email phone profile`, e `phone` não está em AllowedOAuthScopes —
+    // o Cognito recusa a autorização por um escopo que nós mesmos anunciamos.
+    //
+    // A fonte da verdade é o app client, em guedder/identity/staging/cognito.tf.
+    // Mudar lá exige mudar GUEDDER_MCP_SCOPES aqui; os dois lados precisam
+    // concordar, como o log group e a policy do IAM.
+    scopes_supported: cfg.scopes ?? ["openid", "email", "profile"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
   };
