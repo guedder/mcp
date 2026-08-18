@@ -12,7 +12,12 @@
  *
  *   node test/validar-staging.mjs                    # sem token: valida o que dá
  *   TOKEN=eyJ... node test/validar-staging.mjs       # ponta a ponta
- *   TOKEN=eyJ... ID_PEDIDO=5daig7vi11 node test/validar-staging.mjs
+ *   AWS_PROFILE=guedder_readonly TOKEN=eyJ... ID_PEDIDO=5daig7vi11 node test/validar-staging.mjs
+ *
+ * O AWS_PROFILE importa: a auditoria usa a credencial do SERVIDOR, e o log group
+ * /ecs/guedder-staging vive na conta 851725365475. Com o profile default a query
+ * morre em "not authorized to perform StartQuery" — que é erro de credencial
+ * local, não do portão de admin.
  *
  * Para obter o token, abra a Hosted UI e troque o code:
  *   https://guedder-auth-staging.auth.us-east-1.amazoncognito.com/oauth2/authorize
@@ -130,14 +135,25 @@ try {
   } else if (!ID_PEDIDO) {
     pular("rastrear compra", "sem ID_PEDIDO — passe um id de pedido real de staging");
   } else {
+    // O esperado sai do PRÓPRIO token, não de uma suposição. Antes isto tratava
+    // qualquer recusa como acerto ("esperado se não for admin") — e passou verde
+    // com um token `custom:role=ADMIN` sendo barrado, escondendo que o MCP lia
+    // uma claim (`custom:is_admin`) que a Pre-Token nunca emitiu.
+    const claimsDoToken = JSON.parse(Buffer.from(TOKEN.split(".")[1], "base64url").toString());
+    const ehAdmin = claimsDoToken["custom:role"] === "ADMIN";
+
     const aud = await mcp("tools/call",
       { name: "guedder_rastrear_compra", arguments: { identificador: ID_PEDIDO } }, TOKEN);
     const r = aud.corpo?.result;
     if (r?.isError) {
       const txt = r.content?.[0]?.text ?? "";
-      txt.includes("administrativo")
-        ? ok("portão de admin barrou usuário comum", "esperado se o token não for de admin")
-        : erro("rastrear compra", txt.slice(0, 200));
+      if (ehAdmin) {
+        erro("rastrear compra", `token é custom:role=ADMIN e foi barrado — ${txt.slice(0, 160)}`);
+      } else {
+        txt.includes("administrativo")
+          ? ok("portão de admin barrou não-admin", `custom:role=${claimsDoToken["custom:role"] ?? "(ausente)"}`)
+          : erro("rastrear compra", txt.slice(0, 200));
+      }
     } else {
       const dados = r?.structuredContent?.result ?? {};
       dados.encontrado
