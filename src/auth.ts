@@ -129,23 +129,37 @@ function asBaseUrl(cfg: AuthConfig): string {
  * de escrever à mão é de propósito: endpoint que o Cognito mudar continua certo
  * aqui sem ninguém lembrar de editar.
  *
- * O `issuer` mantém o do Cognito, e não a URL deste servidor. É uma escolha com
- * custo conhecido: o RFC 8414 §3.3 manda o issuer bater com a URL de onde o
- * documento veio, então cliente estrito pode recusar. A alternativa — declarar
- * este servidor como issuer — faria o `iss` do token emitido pelo Cognito não
- * bater com o do AS, que é a checagem de segurança de verdade. Entre quebrar uma
- * regra de descoberta e quebrar a validação do token, quebra-se a primeira.
+ * O `issuer` é ESTE servidor, não o Cognito, e os endpoints apontam para os
+ * nossos. A primeira versão fazia o contrário — mantinha o issuer do Cognito por
+ * receio de que o `iss` do token não batesse — e o MCP Inspector recusou na
+ * hora, aplicando o RFC 8414 §3.3 ao pé da letra:
+ *
+ *   Issuer mismatch in authorization server metadata (RFC 8414 §3.3):
+ *   expected "https://mcp.dev.services.guedder.com",
+ *   received "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_UhlIAqn5b"
+ *
+ * O receio não se sustenta: cliente MCP trata o access token como opaco, quem
+ * valida assinatura e `iss` é este servidor — e continua validando contra o
+ * Cognito, em `createVerifier`. Nada aqui afrouxa aquela checagem.
+ *
+ * E é coerente com o que passamos a ser: com /authorize e /token servidos aqui,
+ * este servidor É o authorization server da perspectiva do cliente. Declarar o
+ * issuer do Cognito enquanto se serve os endpoints próprios era o pior dos dois
+ * mundos — meia fachada.
+ *
+ * `jwks_uri` continua sendo o do Cognito: quem assina os tokens é ele.
  */
 export async function authorizationServerMetadata(
   cfg: AuthConfig,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Record<string, unknown>> {
-  const res = await fetchImpl(`${cfg.issuer}/.well-known/openid-configuration`);
-  if (!res.ok) throw new Error(`OIDC discovery do Cognito falhou: ${res.status}`);
-  const doc = (await res.json()) as Record<string, unknown>;
-
+  const doc = await fetchCognitoDoc(cfg, fetchImpl);
+  const base = asBaseUrl(cfg);
   return {
     ...doc,
+    issuer: base,
+    authorization_endpoint: `${base}/authorize`,
+    token_endpoint: `${base}/token`,
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
   };
@@ -163,7 +177,10 @@ export async function cognitoEndpoints(
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ authorize: string; token: string }> {
   if (endpointsCache) return endpointsCache;
-  const doc = await authorizationServerMetadata(cfg, fetchImpl);
+  // Documento CRU do Cognito, e não o nosso `authorizationServerMetadata`: aquele
+  // já reescreve os endpoints para os nossos, e usá-lo aqui faria o /authorize
+  // redirecionar para si mesmo, em laço infinito.
+  const doc = await fetchCognitoDoc(cfg, fetchImpl);
   const authorize = doc.authorization_endpoint as string | undefined;
   const token = doc.token_endpoint as string | undefined;
   if (!authorize || !token) throw new Error("Cognito não publicou authorization_endpoint/token_endpoint.");
@@ -174,4 +191,14 @@ export async function cognitoEndpoints(
 /** Só para teste: o cache é de processo e sobreviveria entre casos. */
 export function limparCacheDeEndpoints() {
   endpointsCache = null;
+}
+
+/** Documento OIDC do Cognito, cru. Único ponto que fala com a descoberta dele. */
+async function fetchCognitoDoc(
+  cfg: AuthConfig,
+  fetchImpl: typeof fetch,
+): Promise<Record<string, unknown>> {
+  const res = await fetchImpl(`${cfg.issuer}/.well-known/openid-configuration`);
+  if (!res.ok) throw new Error(`OIDC discovery do Cognito falhou: ${res.status}`);
+  return (await res.json()) as Record<string, unknown>;
 }
