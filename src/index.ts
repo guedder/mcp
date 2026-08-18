@@ -524,7 +524,9 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
   // primeira pergunta em toda investigação de OAuth.
   const inicio = Date.now();
   res.on("finish", () => {
-    console.error(`${req.method} ${pathname} -> ${res.statusCode} (${Date.now() - inicio}ms)`);
+    console.error(
+      `${req.method} ${pathname}${detalheOauth(pathname, req)} -> ${res.statusCode} (${Date.now() - inicio}ms)`,
+    );
   });
 
   // RFC 9728: o cliente MCP lê isto depois do 401 para saber onde autenticar.
@@ -575,6 +577,57 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
       res.writeHead(502, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "Authorization server indisponível." }));
     }
+    return;
+  }
+
+  // RFC 7591, versão mascarada: devolve SEMPRE o app client já registrado, em vez
+  // de criar um no Cognito por registro.
+  //
+  // O Cognito não tem DCR, e sem isto todo cliente que exige registro dinâmico
+  // (MCP Inspector, Claude Code) para antes de autenticar. Como este MCP vai no
+  // plugin da Guedder, exigir `client_id` colado à mão em cada instalação não é
+  // opção — é justamente o que o plugin existe para evitar.
+  //
+  // Mascarar em vez de criar de verdade: os `redirect_uri` que importam já estão
+  // na lista de callbacks do app client, e o `client_id` não é segredo (cliente
+  // público, PKCE). Quem gateia continua sendo o login no Cognito, e o recorte de
+  // `redirect_uri` continua sendo dele — registrar aqui um callback fora da lista
+  // não faz o Cognito aceitá-lo no /authorize.
+  //
+  // Se algum dia aparecer cliente com `redirect_uri` imprevisível (porta local
+  // sorteada), este atalho deixa de servir e a saída é CreateUserPoolClient por
+  // registro, com TTL e coleta — o log abaixo é o que vai dizer se chegamos lá.
+  if (AUTH && pathname === "/register" && req.method === "POST") {
+    try {
+      const corpo = await lerCorpo(req);
+      const pedido = corpo ? JSON.parse(corpo) : {};
+      console.error(`register: redirect_uris=${JSON.stringify(pedido.redirect_uris ?? [])}`);
+      res.writeHead(201, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        client_id: AUTH.clientId,
+        // Cliente público: sem secret, e o `token_endpoint_auth_method` precisa
+        // dizer isso, senão o cliente tenta autenticar no /token e o Cognito
+        // recusa.
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        redirect_uris: pedido.redirect_uris ?? [],
+        client_id_issued_at: Math.floor(Date.now() / 1000),
+      }));
+    } catch (e: any) {
+      console.error(`Falha no registro: ${e?.message ?? e}`);
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "invalid_client_metadata" }));
+    }
+    return;
+  }
+
+  // Método errado em endpoint que EXISTE responde 405, não 404. O 404 manda
+  // investigar roteamento, que é o caminho errado — foi o que fez `GET /token`
+  // parecer rota inexistente quando era só método.
+  if (AUTH && ["/token", "/register"].includes(pathname) && req.method !== "POST") {
+    res.writeHead(405, { "content-type": "application/json", allow: "POST" });
+    res.end(JSON.stringify({ error: `${pathname} aceita apenas POST.` }));
     return;
   }
 
@@ -661,4 +714,26 @@ if (MCP_TRANSPORT === "stdio") {
   });
 } else {
   throw new Error("GUEDDER_MCP_TRANSPORT deve ser 'streamable-http' ou 'stdio'.");
+}
+
+/**
+ * Query string dos endpoints de OAuth, para o log.
+ *
+ * Sem isto o log diz "GET /authorize -> 302" e não diz PARA ONDE nem COM QUE
+ * parâmetros — que é justamente a pergunta quando o cliente reclama de
+ * `provider_redirect`. Duas rodadas de investigação foram perdidas por hipótese
+ * sobre `redirect_uri` que o log não confirmava nem desmentia.
+ *
+ * `code` e `code_verifier` saem redigidos: são credenciais de uso único, e log de
+ * container vai para o CloudWatch, que tem retenção e leitores diferentes de quem
+ * está depurando.
+ */
+const REDIGIR = new Set(["code", "code_verifier", "client_secret", "refresh_token"]);
+
+function detalheOauth(pathname: string, req: IncomingMessage): string {
+  if (!["/authorize", "/token", "/register"].includes(pathname)) return "";
+  const q = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`).searchParams;
+  const partes: string[] = [];
+  q.forEach((v, k) => partes.push(`${k}=${REDIGIR.has(k) ? "[redigido]" : v}`));
+  return partes.length ? ` ?${partes.join("&")}` : "";
 }
