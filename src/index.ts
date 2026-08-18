@@ -648,6 +648,10 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
         body: corpo,
       });
       const texto = await upstream.text();
+      // Erro do Cognito no log. Ele volta como {"error":"invalid_grant"} e sem
+      // isto o log dizia só "POST /token -> 400", que não diz o que recusar
+      // significa. O corpo de ERRO não traz token nem código — só o motivo.
+      if (!upstream.ok) console.error(`token: cognito ${upstream.status} ${texto.slice(0, 200)}`);
       res.writeHead(upstream.status, {
         "content-type": upstream.headers.get("content-type") ?? "application/json",
       });

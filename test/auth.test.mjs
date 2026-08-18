@@ -122,6 +122,7 @@ test("espelho do authorization server corrige o que o Cognito declara errado", a
     token_endpoint: "https://exemplo.auth.us-east-1.amazoncognito.com/oauth2/token",
     jwks_uri: `${ISSUER}/.well-known/jwks.json`,
     token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+    scopes_supported: ["openid", "email", "phone", "profile"],
   };
   const fetchFalso = async (url) => {
     assert.equal(url, `${ISSUER}/.well-known/openid-configuration`);
@@ -148,6 +149,12 @@ test("espelho do authorization server corrige o que o Cognito declara errado", a
   // Sem registration_endpoint, cliente que exige DCR para antes de autenticar —
   // e este MCP vai no plugin, onde colar client_id à mão não é opção.
   assert.equal(doc.registration_endpoint, "https://mcp.guedder.com/register");
+
+  // scopes_supported é do APP CLIENT, não do pool. O documento do Cognito trazia
+  // `phone`, que o app client não permite, e o cliente pediu um escopo que o
+  // próprio Cognito recusa — anunciado por nós.
+  assert.deepEqual(doc.scopes_supported, ["openid", "email", "profile"]);
+  assert.ok(!doc.scopes_supported.includes("phone"));
 
   // jwks_uri continua sendo o do Cognito: quem assina os tokens é ele.
   assert.equal(doc.jwks_uri, doCognito.jwks_uri);
