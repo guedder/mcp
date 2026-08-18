@@ -19,6 +19,7 @@ import {
   authConfigFromEnv,
   createVerifier,
   protectedResourceMetadata,
+  authorizationServerMetadata,
   wwwAuthenticate,
   type Caller,
 } from "./auth.js";
@@ -495,14 +496,40 @@ function createMcpServer(caller?: Caller): McpServer {
 
 const METADATA_PATH = "/.well-known/oauth-protected-resource";
 
+const AS_METADATA_PATH = "/.well-known/oauth-authorization-server";
+
 async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const base = `http://${req.headers.host ?? "localhost"}`;
   const pathname = new URL(req.url ?? "/", base).pathname;
+
+  // Log de request. O servidor era mudo, e quando um cliente MCP desistia no meio
+  // da descoberta não havia como saber em que passo — só o erro genérico do lado
+  // dele. Uma linha por request responde "ele chegou a buscar isto?", que é a
+  // primeira pergunta em toda investigação de OAuth.
+  const inicio = Date.now();
+  res.on("finish", () => {
+    console.error(`${req.method} ${pathname} -> ${res.statusCode} (${Date.now() - inicio}ms)`);
+  });
 
   // RFC 9728: o cliente MCP lê isto depois do 401 para saber onde autenticar.
   if (AUTH && pathname === METADATA_PATH) {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(protectedResourceMetadata(AUTH), null, 2));
+    return;
+  }
+
+  // RFC 8414. O Cognito não serve este caminho (400 em todas as formas) e declara
+  // errado o que serve — ver authorizationServerMetadata em auth.ts.
+  if (AUTH && pathname === AS_METADATA_PATH) {
+    try {
+      const doc = await authorizationServerMetadata(AUTH);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(doc, null, 2));
+    } catch (e: any) {
+      console.error(`Falha ao espelhar a metadata do Cognito: ${e?.message ?? e}`);
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Não foi possível obter a metadata do authorization server." }));
+    }
     return;
   }
 

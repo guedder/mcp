@@ -6,7 +6,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SignJWT, exportJWK, generateKeyPair, createLocalJWKSet } from "jose";
-import { createVerifier, AuthError, protectedResourceMetadata } from "../dist/auth.js";
+import {
+  createVerifier,
+  AuthError,
+  protectedResourceMetadata,
+  authorizationServerMetadata,
+} from "../dist/auth.js";
 
 const ISSUER = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TESTE";
 const CLIENT_ID = "cliente-do-agente";
@@ -95,11 +100,54 @@ test("token sem email não autentica", async () => {
   await assert.rejects(() => verify(`Bearer ${semEmail}`), AuthError);
 });
 
+// authorization_servers aponta para o PRÓPRIO MCP, não para o issuer do Cognito:
+// é daqui que sai a metadata RFC 8414, porque o Cognito não serve aquele caminho.
 test("metadata aponta o resource e o authorization server", () => {
   const meta = protectedResourceMetadata({
     issuer: ISSUER,
     resource: "https://mcp.guedder.com/mcp",
   });
   assert.equal(meta.resource, "https://mcp.guedder.com/mcp");
-  assert.deepEqual(meta.authorization_servers, [ISSUER]);
+  assert.deepEqual(meta.authorization_servers, ["https://mcp.guedder.com"]);
+});
+
+test("espelho do authorization server corrige o que o Cognito declara errado", async () => {
+  // Documento como o Cognito realmente publica: sem PKCE anunciado e afirmando
+  // exigir secret. As duas coisas ao contrário do que ele faz na prática.
+  const doCognito = {
+    issuer: ISSUER,
+    authorization_endpoint: "https://exemplo.auth.us-east-1.amazoncognito.com/oauth2/authorize",
+    token_endpoint: "https://exemplo.auth.us-east-1.amazoncognito.com/oauth2/token",
+    jwks_uri: `${ISSUER}/.well-known/jwks.json`,
+    token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+  };
+  const fetchFalso = async (url) => {
+    assert.equal(url, `${ISSUER}/.well-known/openid-configuration`);
+    return { ok: true, json: async () => doCognito };
+  };
+
+  const doc = await authorizationServerMetadata(
+    { issuer: ISSUER, resource: "https://mcp.guedder.com/mcp" },
+    fetchFalso,
+  );
+
+  assert.deepEqual(doc.code_challenge_methods_supported, ["S256"]);
+  assert.ok(doc.token_endpoint_auth_methods_supported.includes("none"),
+    "cliente público precisa ver `none`, senão conclui que o AS exige secret");
+
+  // Endpoints vêm do Cognito, não escritos à mão: o que ele mudar continua certo.
+  assert.equal(doc.authorization_endpoint, doCognito.authorization_endpoint);
+  assert.equal(doc.token_endpoint, doCognito.token_endpoint);
+
+  // issuer segue o do Cognito, e não a URL deste servidor: é o `iss` que os
+  // tokens carregam, e validação de token importa mais que a regra de descoberta.
+  assert.equal(doc.issuer, ISSUER);
+});
+
+test("espelho falha alto quando o Cognito não responde", async () => {
+  const fetchFalso = async () => ({ ok: false, status: 503, json: async () => ({}) });
+  await assert.rejects(
+    () => authorizationServerMetadata({ issuer: ISSUER, resource: "https://m/mcp" }, fetchFalso),
+    /OIDC discovery do Cognito falhou: 503/,
+  );
 });
