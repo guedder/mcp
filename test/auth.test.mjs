@@ -11,6 +11,8 @@ import {
   AuthError,
   protectedResourceMetadata,
   authorizationServerMetadata,
+  cognitoEndpoints,
+  limparCacheDeEndpoints,
 } from "../dist/auth.js";
 
 const ISSUER = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_TESTE";
@@ -150,4 +152,42 @@ test("espelho falha alto quando o Cognito não responde", async () => {
     () => authorizationServerMetadata({ issuer: ISSUER, resource: "https://m/mcp" }, fetchFalso),
     /OIDC discovery do Cognito falhou: 503/,
   );
+});
+
+test("endpoints do Cognito saem do documento e ficam em cache", async () => {
+  limparCacheDeEndpoints();
+  let chamadas = 0;
+  const fetchFalso = async () => {
+    chamadas++;
+    return {
+      ok: true,
+      json: async () => ({
+        issuer: ISSUER,
+        authorization_endpoint: "https://exemplo.amazoncognito.com/oauth2/authorize",
+        token_endpoint: "https://exemplo.amazoncognito.com/oauth2/token",
+      }),
+    };
+  };
+  const cfg = { issuer: ISSUER, resource: "https://mcp.guedder.com/mcp" };
+
+  const um = await cognitoEndpoints(cfg, fetchFalso);
+  const dois = await cognitoEndpoints(cfg, fetchFalso);
+
+  assert.equal(um.authorize, "https://exemplo.amazoncognito.com/oauth2/authorize");
+  assert.equal(um.token, "https://exemplo.amazoncognito.com/oauth2/token");
+  // Cache: o fluxo OAuth acontece com o usuário esperando no navegador, e buscar
+  // a descoberta a cada request só somaria latência num caminho fixo por pool.
+  assert.equal(chamadas, 1, "segunda chamada deve vir do cache");
+  assert.deepEqual(dois, um);
+  limparCacheDeEndpoints();
+});
+
+test("falta de endpoint no documento falha alto", async () => {
+  limparCacheDeEndpoints();
+  const fetchFalso = async () => ({ ok: true, json: async () => ({ issuer: ISSUER }) });
+  await assert.rejects(
+    () => cognitoEndpoints({ issuer: ISSUER, resource: "https://m/mcp" }, fetchFalso),
+    /não publicou authorization_endpoint/,
+  );
+  limparCacheDeEndpoints();
 });

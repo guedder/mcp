@@ -20,6 +20,7 @@ import {
   createVerifier,
   protectedResourceMetadata,
   authorizationServerMetadata,
+  cognitoEndpoints,
   wwwAuthenticate,
   type Caller,
 } from "./auth.js";
@@ -498,6 +499,21 @@ const METADATA_PATH = "/.well-known/oauth-protected-resource";
 
 const AS_METADATA_PATH = "/.well-known/oauth-authorization-server";
 
+/** Corpo cru do request. Usado só no repasse do /token, que é form-urlencoded. */
+function lerCorpo(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let dados = "";
+    req.on("data", (c) => {
+      dados += c;
+      // Teto defensivo: o corpo de um token request tem centenas de bytes. Sem
+      // limite, um POST grande neste endpoint público viraria memória do processo.
+      if (dados.length > 64_000) reject(new Error("Corpo do token request grande demais."));
+    });
+    req.on("end", () => resolve(dados));
+    req.on("error", reject);
+  });
+}
+
 async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const base = `http://${req.headers.host ?? "localhost"}`;
   const pathname = new URL(req.url ?? "/", base).pathname;
@@ -529,6 +545,64 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
       console.error(`Falha ao espelhar a metadata do Cognito: ${e?.message ?? e}`);
       res.writeHead(502, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "Não foi possível obter a metadata do authorization server." }));
+    }
+    return;
+  }
+
+  // Fachada de authorization server.
+  //
+  // Alguns clientes MCP ignoram o `authorization_endpoint` do documento e montam
+  // `<base do AS>/authorize` por convenção. Como a nossa metadata RFC 9728
+  // declara este servidor como authorization server, o navegador do usuário vem
+  // parar aqui — comprovado por um `GET /favicon.ico` no log, que só existe se um
+  // navegador navegou até esta origem.
+  //
+  // Redirecionar em vez de reimplementar: o Cognito segue sendo quem autentica,
+  // emite código e troca por token. Isto é só o encaminhamento que falta para o
+  // cliente que não lê o documento.
+  if (AUTH && pathname === "/authorize") {
+    try {
+      const { authorize } = await cognitoEndpoints(AUTH);
+      const destino = new URL(authorize);
+      // Repassa a query INTEIRA sem interpretar: PKCE, state e scope são do
+      // cliente e do Cognito. Reconstruir só criaria oportunidade de perder um
+      // parâmetro que ainda não existe.
+      new URL(req.url ?? "/", base).searchParams.forEach((v, k) => destino.searchParams.set(k, v));
+      res.writeHead(302, { location: destino.toString() });
+      res.end();
+    } catch (e: any) {
+      console.error(`Falha ao resolver o authorize do Cognito: ${e?.message ?? e}`);
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Authorization server indisponível." }));
+    }
+    return;
+  }
+
+  // O /token NÃO pode ser 302: é POST com corpo, e redirect faria o cliente
+  // perder o corpo (ou virar GET). Repassa e devolve a resposta como veio.
+  if (AUTH && pathname === "/token" && req.method === "POST") {
+    try {
+      const { token } = await cognitoEndpoints(AUTH);
+      const corpo = await lerCorpo(req);
+      const upstream = await fetch(token, {
+        method: "POST",
+        headers: {
+          "content-type": req.headers["content-type"] ?? "application/x-www-form-urlencoded",
+          // Client confidencial manda Basic; o nosso é público e não manda nada.
+          // Repassar o que vier mantém os dois casos funcionando.
+          ...(req.headers.authorization ? { authorization: req.headers.authorization } : {}),
+        },
+        body: corpo,
+      });
+      const texto = await upstream.text();
+      res.writeHead(upstream.status, {
+        "content-type": upstream.headers.get("content-type") ?? "application/json",
+      });
+      res.end(texto);
+    } catch (e: any) {
+      console.error(`Falha ao repassar o token do Cognito: ${e?.message ?? e}`);
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Token endpoint indisponível." }));
     }
     return;
   }
