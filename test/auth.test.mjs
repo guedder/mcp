@@ -137,13 +137,16 @@ test("espelho do authorization server corrige o que o Cognito declara errado", a
   assert.ok(doc.token_endpoint_auth_methods_supported.includes("none"),
     "cliente público precisa ver `none`, senão conclui que o AS exige secret");
 
-  // Endpoints vêm do Cognito, não escritos à mão: o que ele mudar continua certo.
-  assert.equal(doc.authorization_endpoint, doCognito.authorization_endpoint);
-  assert.equal(doc.token_endpoint, doCognito.token_endpoint);
+  // issuer e endpoints são NOSSOS. O MCP Inspector recusou a versão anterior
+  // aplicando o RFC 8414 §3.3 — o issuer tem que bater com a URL de origem do
+  // documento. E é coerente: servimos /authorize e /token, então somos o AS da
+  // perspectiva do cliente.
+  assert.equal(doc.issuer, "https://mcp.guedder.com");
+  assert.equal(doc.authorization_endpoint, "https://mcp.guedder.com/authorize");
+  assert.equal(doc.token_endpoint, "https://mcp.guedder.com/token");
 
-  // issuer segue o do Cognito, e não a URL deste servidor: é o `iss` que os
-  // tokens carregam, e validação de token importa mais que a regra de descoberta.
-  assert.equal(doc.issuer, ISSUER);
+  // jwks_uri continua sendo o do Cognito: quem assina os tokens é ele.
+  assert.equal(doc.jwks_uri, doCognito.jwks_uri);
 });
 
 test("espelho falha alto quando o Cognito não responde", async () => {
