@@ -145,6 +145,10 @@ test("espelho do authorization server corrige o que o Cognito declara errado", a
   assert.equal(doc.authorization_endpoint, "https://mcp.guedder.com/authorize");
   assert.equal(doc.token_endpoint, "https://mcp.guedder.com/token");
 
+  // Sem registration_endpoint, cliente que exige DCR para antes de autenticar —
+  // e este MCP vai no plugin, onde colar client_id à mão não é opção.
+  assert.equal(doc.registration_endpoint, "https://mcp.guedder.com/register");
+
   // jwks_uri continua sendo o do Cognito: quem assina os tokens é ele.
   assert.equal(doc.jwks_uri, doCognito.jwks_uri);
 });
