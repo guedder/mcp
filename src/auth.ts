@@ -81,15 +81,72 @@ export function createVerifier(cfg: AuthConfig) {
 
 export class AuthError extends Error {}
 
-/** RFC 9728: como o cliente MCP descobre onde autenticar depois de tomar 401. */
+/**
+ * RFC 9728: como o cliente MCP descobre onde autenticar depois de tomar 401.
+ *
+ * `authorization_servers` aponta para o PRÓPRIO MCP, e não para o issuer do
+ * Cognito, porque é daqui que sai a metadata do authorization server — ver
+ * `authorizationServerMetadata` abaixo para o porquê.
+ */
 export function protectedResourceMetadata(cfg: AuthConfig) {
   return {
     resource: cfg.resource,
-    authorization_servers: [cfg.issuer],
+    authorization_servers: [asBaseUrl(cfg)],
     bearer_methods_supported: ["header"],
   };
 }
 
 export function wwwAuthenticate(cfg: AuthConfig, metadataUrl: string): string {
   return `Bearer resource_metadata="${metadataUrl}", error="invalid_token"`;
+}
+
+/** Base pública deste servidor, derivada do `resource` (que já é <base>/mcp). */
+function asBaseUrl(cfg: AuthConfig): string {
+  const u = new URL(cfg.resource);
+  return u.origin;
+}
+
+/**
+ * RFC 8414 servida por nós, espelhando o Cognito e corrigindo o que ele declara
+ * errado sobre si mesmo.
+ *
+ * O Cognito só publica `<issuer>/.well-known/openid-configuration`. As duas
+ * formas do RFC 8414 (`/.well-known/oauth-authorization-server`, com e sem
+ * inserção de path) devolvem 400 — conferido ao vivo. Cliente que só procura o
+ * caminho do 8414 nunca acha nada.
+ *
+ * Pior: o documento que ele publica mente por omissão em dois pontos que decidem
+ * se um cliente público consegue autenticar:
+ *
+ *   token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"]
+ *   code_challenge_methods_supported: (ausente)
+ *
+ * Ou seja, o Cognito afirma exigir secret e não afirma suportar PKCE — as duas
+ * ao contrário do que ele faz na prática. Nosso app client é público, sem secret
+ * (o Cognito fixa isso na criação), e o login por PKCE/S256 funciona.
+ *
+ * Republicamos o documento dele com esses dois campos corrigidos. Buscar em vez
+ * de escrever à mão é de propósito: endpoint que o Cognito mudar continua certo
+ * aqui sem ninguém lembrar de editar.
+ *
+ * O `issuer` mantém o do Cognito, e não a URL deste servidor. É uma escolha com
+ * custo conhecido: o RFC 8414 §3.3 manda o issuer bater com a URL de onde o
+ * documento veio, então cliente estrito pode recusar. A alternativa — declarar
+ * este servidor como issuer — faria o `iss` do token emitido pelo Cognito não
+ * bater com o do AS, que é a checagem de segurança de verdade. Entre quebrar uma
+ * regra de descoberta e quebrar a validação do token, quebra-se a primeira.
+ */
+export async function authorizationServerMetadata(
+  cfg: AuthConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Record<string, unknown>> {
+  const res = await fetchImpl(`${cfg.issuer}/.well-known/openid-configuration`);
+  if (!res.ok) throw new Error(`OIDC discovery do Cognito falhou: ${res.status}`);
+  const doc = (await res.json()) as Record<string, unknown>;
+
+  return {
+    ...doc,
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
+  };
 }
