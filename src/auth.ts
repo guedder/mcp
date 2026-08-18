@@ -150,3 +150,28 @@ export async function authorizationServerMetadata(
     token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
   };
 }
+
+/**
+ * Endpoints do Cognito, do documento que ele publica. Cacheado no processo: são
+ * fixos por pool, e buscar a cada request do fluxo OAuth só somaria latência num
+ * caminho que o usuário está esperando no navegador.
+ */
+let endpointsCache: { authorize: string; token: string } | null = null;
+
+export async function cognitoEndpoints(
+  cfg: AuthConfig,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ authorize: string; token: string }> {
+  if (endpointsCache) return endpointsCache;
+  const doc = await authorizationServerMetadata(cfg, fetchImpl);
+  const authorize = doc.authorization_endpoint as string | undefined;
+  const token = doc.token_endpoint as string | undefined;
+  if (!authorize || !token) throw new Error("Cognito não publicou authorization_endpoint/token_endpoint.");
+  endpointsCache = { authorize, token };
+  return endpointsCache;
+}
+
+/** Só para teste: o cache é de processo e sobreviveria entre casos. */
+export function limparCacheDeEndpoints() {
+  endpointsCache = null;
+}
