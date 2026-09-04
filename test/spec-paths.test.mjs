@@ -50,8 +50,9 @@ test("cada tool chama o path e os query params da sua operacao OpenAPI", async (
       // findExtratosByEvento, getContagemIngressosVendidos e getGatewaysAdquirentes_1
       // documentam a paginacao como um schema Pageable opaco (nao expandem "page"/"size"
       // como nomes de query literais), diferente dos endpoints v3 equivalentes. Sem
-      // nome usavel na spec para conferir, pulamos a checagem estrutural so para elas.
-      if (declared.size === 0 || (declared.has("pageable") && !declared.has("page"))) continue;
+      // nome usavel na spec para conferir, pulamos so a checagem de query para elas;
+      // o path continua sendo conferido para todas.
+      const skipQueryCheck = declared.size === 0 || (declared.has("pageable") && !declared.has("page"));
       const pattern = new RegExp("^" + specPath.replace(/\{[^}]+\}/g, "[^/]+") + "$");
 
       seen.length = 0;
@@ -59,6 +60,7 @@ test("cada tool chama o path e os query params da sua operacao OpenAPI", async (
       assert.notEqual(result.isError, true, `${tool.name}: ${result.content?.[0]?.text}`);
       assert.equal(seen.length, 1, `${tool.name} deve fazer exatamente um GET`);
       assert.match(seen[0].pathname, pattern, `${tool.name}: ${seen[0].pathname} nao casa com ${specPath} (${operation.operationId})`);
+      if (skipQueryCheck) continue;
       for (const key of seen[0].searchParams.keys()) {
         assert.ok(declared.has(key), `${tool.name}: query param "${key}" nao existe em ${operation.operationId} (${[...declared].join(", ")})`);
       }
