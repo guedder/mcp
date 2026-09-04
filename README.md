@@ -70,23 +70,23 @@ quando precisar atualizar os schemas antes de publicar uma nova versão do MCP.
 
 | Tool | Auth | v3 endpoint |
 |---|---|---|
-| `guedder_listar_eventos` | — | `GET /api/v3/evento` (MCP: `max_results` padrão 50, máximo 100; sempre página 0) |
-| `guedder_get_evento` | — | `GET /api/v3/evento/{id}` |
-| `guedder_listar_categorias_evento` | — | `GET /api/v3/evento/categorias/publico` |
-| `guedder_listar_atracoes_evento` | — | `GET /api/v3/evento/{eventoId}/atracoes/publico` |
-| `guedder_listar_lotes_evento` | — | `GET /api/v3/lote/evento/{eventoId}/publico` |
-| `guedder_get_parametros_venda` | — | `GET /api/v3/compra/evento/{eventoId}/parametros-venda/publico` |
-| `guedder_get_lote` | ✅ | `GET /api/v3/lote/{codigoOrEventoId}/lote/{codigoOrLoteId}` |
-| `guedder_buscar_ingressos_evento` | ✅ | `GET /api/v3/ingresso/{eventoId}/buscar` (MCP: `max_results`, sempre página 0) |
-| `guedder_meus_ingressos` | ✅ | `GET /api/v3/ingresso/meus_ingressos/todos` |
-| `guedder_minhas_compras` | ✅ | `GET /api/v3/minhas_compras` (MCP: `max_results`, sempre página 0) |
+| `guedder_listar_eventos` | — | `GET /api/v3/eventos` (MCP: `max_results`; página 1, pois a API pagina a partir de 1) |
+| `guedder_get_evento` | — | `GET /api/v3/eventos/{id}` |
+| `guedder_listar_categorias_evento` | — | `GET /api/v3/categorias-evento` |
+| `guedder_listar_atracoes_evento` | — | `GET /api/v3/eventos/{eventoId}/atracoes` |
+| `guedder_listar_lotes_evento` | — | `GET /api/v3/eventos/{eventoId}/lotes` |
+| `guedder_get_parametros_venda` | — | `GET /api/v3/eventos/{eventoId}/parametros-venda` |
+| `guedder_get_lote` | ✅ | `GET /api/v3/eventos/{codigoOrEventoId}/lotes/{codigoOrLoteId}` |
+| `guedder_buscar_ingressos_evento` | ✅ | `GET /api/v3/eventos/{eventoId}/ingressos` (MCP: `max_results`, sempre página 0) |
+| `guedder_meus_ingressos` | ✅ | `GET /api/v3/ingressos` |
+| `guedder_minhas_compras` | ✅ | `GET /api/v3/compras` (MCP: `max_results`, sempre página 0) |
 | `guedder_buscar_compras_evento` | ✅ | `GET /api/v2/compra/evento/{eventoId}/extrato` (MCP: `max_results`, sempre página 0) |
 | `guedder_auditar_vendas_evento` | ✅ | `GET /api/v1/metrica/{eventoId}/ultimas-vendas` (auditoria operacional; MCP: `max_results`, sempre página 0) |
 | `guedder_resumo_vendas_evento` | ✅ | `GET /api/v1/metrica/{eventoId}/resumo-vendas` |
 | `guedder_listar_integracoes_pagamento` | ✅ ADMIN | `GET /api/v1/administrativo/gateway-adquirentes` (MCP: `max_results`, sempre página 0) |
 | `guedder_listar_resumo_repasses_eventos` | ✅ ADMIN | `GET /api/v3/administrativo/repasses/eventos` (MCP: `max_results`, sempre página 0) |
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
-| `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/usuario_logado` |
+| `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/perfil` |
 
 ## Validação em staging
 

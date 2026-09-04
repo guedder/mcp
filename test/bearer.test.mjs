@@ -12,7 +12,7 @@ test("encaminha o bearer token aos endpoints autenticados", async () => {
       response.end(JSON.stringify({ id: "usuario-teste" }));
       return;
     }
-    assert.equal(request.url, "/api/v3/ingresso/evento-teste/buscar?page=0&size=1");
+    assert.equal(request.url, "/api/v3/eventos/evento-teste/ingressos?page=0&size=1");
     response.end(JSON.stringify({ content: [{ id: "ingresso-teste" }] }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

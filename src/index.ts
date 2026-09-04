@@ -147,20 +147,23 @@ const TOOLS: Tool[] = [
     name: "guedder_listar_eventos",
     title: "Listar eventos públicos",
     description:
-      "Lista até max_results eventos públicos ativos. A consulta sempre usa a primeira página; max_results tem padrão 50 e máximo 100. Filtros opcionais: nomeCidade, nomeEstado (sigla UF), categoriaEventoEnum.",
-    openApiOperationId: "listarEventosLegacySingular",
+      "Lista até max_results eventos públicos ativos. A consulta sempre usa a primeira página; max_results tem padrão 50 e máximo 100. Filtros opcionais: filtro (texto livre), nomeCidade, nomeEstado (sigla UF), categoriaEventoEnum.",
+    openApiOperationId: "listarEventos",
     inputSchema: {
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de eventos retornados; máximo 100"),
+      filtro: z.string().optional().describe("Busca por texto no nome do evento"),
       nomeCidade: z.string().optional(),
       nomeEstado: z.string().optional().describe("Sigla UF, ex: SP"),
       categoriaEventoEnum: z.string().optional(),
     },
     auth: false,
+    // /api/v3/eventos e paginado a partir de 1 (page=0 -> 400). Os demais endpoints seguem em 0.
     build: (a) => ({
-      path: "/api/v3/evento",
+      path: "/api/v3/eventos",
       query: {
-        page: 0,
+        page: 1,
         page_size: a.max_results,
+        filtro: a.filtro,
         nomeCidade: a.nomeCidade,
         nomeEstado: a.nomeEstado,
         categoriaEventoEnum: a.categoriaEventoEnum,
@@ -174,7 +177,7 @@ const TOOLS: Tool[] = [
     openApiOperationId: "getEventoById",
     inputSchema: { id: z.string().describe("UUID ou código do evento") },
     auth: false,
-    build: (a) => ({ path: `/api/v3/evento/${enc(a.id)}` }),
+    build: (a) => ({ path: `/api/v3/eventos/${enc(a.id)}` }),
   },
   {
     name: "guedder_listar_categorias_evento",
@@ -183,7 +186,7 @@ const TOOLS: Tool[] = [
     openApiOperationId: "listarCategoriasEvento",
     inputSchema: {},
     auth: false,
-    build: () => ({ path: "/api/v3/evento/categorias/publico" }),
+    build: () => ({ path: "/api/v3/categorias-evento" }),
   },
   {
     name: "guedder_listar_atracoes_evento",
@@ -192,16 +195,16 @@ const TOOLS: Tool[] = [
     openApiOperationId: "listarAtracoesPorEvento",
     inputSchema: { eventoId: z.string() },
     auth: false,
-    build: (a) => ({ path: `/api/v3/evento/${enc(a.eventoId)}/atracoes/publico` }),
+    build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/atracoes` }),
   },
   {
     name: "guedder_listar_lotes_evento",
     title: "Lotes do evento",
-    description: "Lista os lotes disponíveis para compra num evento. loteId opcional filtra um lote específico.",
+    description: "Lista os lotes disponíveis para compra num evento.",
     openApiOperationId: "listarLotesPublicos",
-    inputSchema: { eventoId: z.string(), loteId: z.string().optional() },
+    inputSchema: { eventoId: z.string() },
     auth: false,
-    build: (a) => ({ path: `/api/v3/lote/evento/${enc(a.eventoId)}/publico`, query: { loteId: a.loteId } }),
+    build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/lotes` }),
   },
   {
     name: "guedder_get_parametros_venda",
@@ -210,7 +213,7 @@ const TOOLS: Tool[] = [
     openApiOperationId: "getParametrosVenda",
     inputSchema: { eventoId: z.string() },
     auth: false,
-    build: (a) => ({ path: `/api/v3/compra/evento/${enc(a.eventoId)}/parametros-venda/publico` }),
+    build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/parametros-venda` }),
   },
   {
     name: "guedder_get_lote",
@@ -219,7 +222,7 @@ const TOOLS: Tool[] = [
     openApiOperationId: "getLotePorCodigoOuId",
     inputSchema: { codigoOrEventoId: z.string(), codigoOrLoteId: z.string() },
     auth: true,
-    build: (a) => ({ path: `/api/v3/lote/${enc(a.codigoOrEventoId)}/lote/${enc(a.codigoOrLoteId)}` }),
+    build: (a) => ({ path: `/api/v3/eventos/${enc(a.codigoOrEventoId)}/lotes/${enc(a.codigoOrLoteId)}` }),
   },
   {
     name: "guedder_buscar_ingressos_evento",
@@ -236,7 +239,7 @@ const TOOLS: Tool[] = [
     },
     auth: true,
     build: (a) => ({
-      path: `/api/v3/ingresso/${enc(a.eventoId)}/buscar`,
+      path: `/api/v3/eventos/${enc(a.eventoId)}/ingressos`,
       query: { filtro: a.filtro, page: 0, size: a.max_results, sessaoId: a.sessaoId, sort: a.sort },
     }),
   },
@@ -248,7 +251,7 @@ const TOOLS: Tool[] = [
     openApiOperationId: "getMeusIngressos",
     inputSchema: { status: z.string().optional(), eventoId: z.string().optional() },
     auth: true,
-    build: (a) => ({ path: "/api/v3/ingresso/meus_ingressos/todos", query: a }),
+    build: (a) => ({ path: "/api/v3/ingressos", query: { cicloDeVida: a.status, eventoId: a.eventoId } }),
   },
   {
     name: "guedder_minhas_compras",
@@ -261,7 +264,7 @@ const TOOLS: Tool[] = [
       sort: z.string().optional(),
     },
     auth: true,
-    build: (a) => ({ path: "/api/v3/minhas_compras", query: { page: 0, size: a.max_results, sort: a.sort } }),
+    build: (a) => ({ path: "/api/v3/compras", query: { page: 0, size: a.max_results, sort: a.sort } }),
   },
   {
     name: "guedder_buscar_compras_evento",
