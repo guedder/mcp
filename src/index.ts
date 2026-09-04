@@ -32,6 +32,8 @@ const MCP_TRANSPORT = process.env.GUEDDER_MCP_TRANSPORT ?? "streamable-http";
 const MCP_HOST = process.env.GUEDDER_MCP_HOST ?? "127.0.0.1";
 const MCP_PORT = Number.parseInt(process.env.GUEDDER_MCP_PORT ?? "3000", 10);
 const MCP_PATH = process.env.GUEDDER_MCP_PATH ?? "/mcp";
+// Modo publico: so tools sem auth. Usado pelo agente de suporte ao comprador (spec no guedder-rag).
+const PUBLIC_ONLY = /^(1|true)$/i.test(process.env.GUEDDER_MCP_PUBLIC_ONLY ?? "");
 const OPENAPI_V3: any = JSON.parse(readFileSync(new URL("./openapi-v3.json", import.meta.url), "utf8"));
 const TOOL_OUTPUT_SCHEMA = z.object({
   result: z.unknown().describe("Resultado bruto da API Guedder. O schema detalhado está em guedder://openapi/v3."),
@@ -384,7 +386,8 @@ function createMcpServer(caller?: Caller): McpServer {
       contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(OPENAPI_INDEX, null, 2) }],
     }),
   );
-  for (const t of TOOLS) {
+  const activeTools = PUBLIC_ONLY ? TOOLS.filter((t) => !t.auth) : TOOLS;
+  for (const t of activeTools) {
     const schemaUri = `guedder://openapi/v3/tools/${t.name}`;
     server.registerResource(
       `${t.name}_schema`,
@@ -429,7 +432,7 @@ function createMcpServer(caller?: Caller): McpServer {
 
   // Auditoria: única tool que não age como o usuário — ela usa a credencial AWS da task.
   // Por isso o portão é aqui e não na API: a API não está no caminho (ADR 0001 §9.7).
-  if (auditoria) {
+  if (auditoria && !PUBLIC_ONLY) {
     server.registerTool(
       "guedder_rastrear_compra",
       {

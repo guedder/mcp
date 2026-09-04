@@ -17,6 +17,7 @@ reverse proxy, por exemplo `https://api.guedder.com/mcp` ou
 | `GUEDDER_MCP_HOST` | `127.0.0.1` | Em contêiner, use `0.0.0.0`; o proxy publica HTTPS. |
 | `GUEDDER_MCP_PORT` | `3000` | Porta HTTP do MCP. |
 | `GUEDDER_MCP_PATH` | `/mcp` | Caminho HTTP do MCP. |
+| `GUEDDER_MCP_PUBLIC_ONLY` | vazio | `1` registra apenas as tools sem autenticação (eventos, lotes, categorias, destaques). Para agentes voltados ao comprador. |
 
 > Antes de expor publicamente, o proxy ou a próxima camada OAuth2 deve autenticar
 > os clientes MCP. `GUEDDER_BEARER_TOKEN` autentica somente este servidor perante
