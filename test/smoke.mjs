@@ -32,7 +32,7 @@ assert.ok(
 );
 const schema = await client.readResource({ uri: "guedder://openapi/v3/tools/guedder_listar_eventos" });
 const specification = JSON.parse(schema.contents[0].text);
-assert.deepEqual(Object.keys(specification.paths), ["/api/v3/evento"]);
+assert.deepEqual(Object.keys(specification.paths), ["/api/v3/eventos"]);
 
 const res = await client.callTool({ name: "guedder_listar_eventos", arguments: { max_results: 1 } });
 const text = res.content?.[0]?.text ?? "";
