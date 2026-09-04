@@ -35,10 +35,13 @@ test("expõe ferramentas via Streamable HTTP stateless em /mcp", async () => {
     const body = await response.text();
     const json = body.match(/^data: (.+)$/m)?.[1] ?? body;
     const payload = JSON.parse(json);
-    assert.equal(payload.result.tools.length, 17);
+    assert.equal(payload.result.tools.length, 18);
     assert.equal(payload.result.tools[0].annotations.readOnlyHint, true);
     assert.equal(payload.result.tools[0].annotations.destructiveHint, false);
     assert.equal(payload.result.tools[0].annotations.idempotentHint, true);
+    const destaque = payload.result.tools.find((item) => item.name === "guedder_eventos_destaque");
+    assert.ok(destaque, "missing guedder_eventos_destaque");
+    assert.deepEqual(Object.keys(destaque.inputSchema.properties ?? {}), []);
     for (const name of [
       "guedder_listar_eventos",
       "guedder_buscar_ingressos_evento",

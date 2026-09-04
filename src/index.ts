@@ -216,6 +216,15 @@ const TOOLS: Tool[] = [
     build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/parametros-venda` }),
   },
   {
+    name: "guedder_eventos_destaque",
+    title: "Eventos em destaque",
+    description: "Lista os eventos em destaque na home da Guedder (seções e listas principais). Sem parâmetros.",
+    openApiOperationId: "getEventosDestaque",
+    inputSchema: {},
+    auth: false,
+    build: () => ({ path: "/api/v3/home/destaques" }),
+  },
+  {
     name: "guedder_get_lote",
     title: "Lote por código/ID",
     description: "Retorna um lote pelo código ou ID do evento e do lote (aceita UUID ou código). Requer auth.",

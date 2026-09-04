@@ -76,6 +76,7 @@ quando precisar atualizar os schemas antes de publicar uma nova versão do MCP.
 | `guedder_listar_atracoes_evento` | — | `GET /api/v3/eventos/{eventoId}/atracoes` |
 | `guedder_listar_lotes_evento` | — | `GET /api/v3/eventos/{eventoId}/lotes` |
 | `guedder_get_parametros_venda` | — | `GET /api/v3/eventos/{eventoId}/parametros-venda` |
+| `guedder_eventos_destaque` | — | `GET /api/v3/home/destaques` |
 | `guedder_get_lote` | ✅ | `GET /api/v3/eventos/{codigoOrEventoId}/lotes/{codigoOrLoteId}` |
 | `guedder_buscar_ingressos_evento` | ✅ | `GET /api/v3/eventos/{eventoId}/ingressos` (MCP: `max_results`, sempre página 0) |
 | `guedder_meus_ingressos` | ✅ | `GET /api/v3/ingressos` |
