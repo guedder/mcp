@@ -99,3 +99,42 @@ test("GUEDDER_MCP_PUBLIC_ONLY=1 registra apenas as tools publicas", async () => 
     await new Promise((resolve) => process.once("exit", resolve));
   }
 });
+
+test("o handshake initialize traz instructions com o fluxo de uso", async () => {
+  const port = await freePort();
+  const process = spawn("node", ["dist/index.js"], {
+    env: { ...globalThis.process.env, GUEDDER_MCP_PORT: String(port) },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      process.stderr.on("data", (chunk) => {
+        if (chunk.toString().includes("Streamable HTTP no ar")) resolve();
+      });
+      process.once("error", reject);
+      process.once("exit", (code) => reject(new Error(`MCP encerrou antes de iniciar (${code}).`)));
+    });
+    const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: { accept: "application/json, text/event-stream", "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    const payload = JSON.parse(body.match(/^data: (.+)$/m)?.[1] ?? body);
+    const instructions = payload.result.instructions;
+    assert.ok(instructions && instructions.length > 200, "instructions ausente ou curto demais");
+    assert.match(instructions, /guedder_listar_eventos/);
+    assert.match(instructions, /guedder_get_parametros_venda/);
+    assert.match(instructions, /404/);
+    assert.match(instructions, /guedder:\/\/openapi\/v3/);
+  } finally {
+    process.kill();
+    await new Promise((resolve) => process.once("exit", resolve));
+  }
+});

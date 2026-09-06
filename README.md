@@ -69,6 +69,12 @@ quando precisar atualizar os schemas antes de publicar uma nova versão do MCP.
 
 ## Tools
 
+O servidor manda um bloco `instructions` no handshake MCP com o fluxo de uso
+(achar o evento e o id → consultar por id) e as regras (nunca inventar id, 404 em
+`parametros-venda` = "ainda não divulgado"). As skills em `skills/` detalham:
+`guedder-mcp-consultar-evento-ao-vivo` (fluxo das tools públicas) e
+`guedder-mcp-auth-cognito` (como a auth liga).
+
 | Tool | Auth | v3 endpoint |
 |---|---|---|
 | `guedder_listar_eventos` | — | `GET /api/v3/eventos` (MCP: `max_results`; página 1, pois a API pagina a partir de 1) |
