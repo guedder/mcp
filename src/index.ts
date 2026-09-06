@@ -149,7 +149,7 @@ const TOOLS: Tool[] = [
     name: "guedder_listar_eventos",
     title: "Listar eventos públicos",
     description:
-      "Lista até max_results eventos públicos ativos. A consulta sempre usa a primeira página; max_results tem padrão 50 e máximo 100. Filtros opcionais: filtro (texto livre), nomeCidade, nomeEstado (sigla UF), categoriaEventoEnum.",
+      "Busca eventos públicos ativos por nome, cidade ou categoria. Use como PRIMEIRO passo para descobrir o id de um evento antes de consultar line-up, lotes ou formas de pagamento. Retorna id, nome, data e local de cada um. max_results: padrão 50, máximo 100 (sempre a primeira página). Filtros opcionais: filtro (texto no nome), nomeCidade, nomeEstado (sigla UF), categoriaEventoEnum.",
     openApiOperationId: "listarEventos",
     inputSchema: {
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de eventos retornados; máximo 100"),
@@ -175,7 +175,8 @@ const TOOLS: Tool[] = [
   {
     name: "guedder_get_evento",
     title: "Detalhe de evento",
-    description: "Dados básicos de um evento por ID (UUID) ou código alfanumérico.",
+    description:
+      "Data, local e dados básicos de UM evento. Input: id (UUID ou código alfanumérico, obtido em guedder_listar_eventos ou guedder_eventos_destaque). Use para responder quando e onde é o evento.",
     openApiOperationId: "getEventoById",
     inputSchema: { id: z.string().describe("UUID ou código do evento") },
     auth: false,
@@ -184,7 +185,8 @@ const TOOLS: Tool[] = [
   {
     name: "guedder_listar_categorias_evento",
     title: "Listar categorias de evento",
-    description: "Lista todas as categorias de evento disponíveis.",
+    description:
+      "Lista as categorias de evento disponíveis (ex: show, festa, teatro). Sem input. Use antes de filtrar guedder_listar_eventos por categoria.",
     openApiOperationId: "listarCategoriasEvento",
     inputSchema: {},
     auth: false,
@@ -193,34 +195,38 @@ const TOOLS: Tool[] = [
   {
     name: "guedder_listar_atracoes_evento",
     title: "Line-up do evento",
-    description: "Lista as atrações (line-up) de um evento.",
+    description:
+      "Lista as atrações / line-up de um evento. Input: eventoId (UUID ou código do evento). Use depois de localizar o evento com guedder_listar_eventos ou guedder_eventos_destaque.",
     openApiOperationId: "listarAtracoesPorEvento",
-    inputSchema: { eventoId: z.string() },
+    inputSchema: { eventoId: z.string().describe("UUID ou código alfanumérico do evento") },
     auth: false,
     build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/atracoes` }),
   },
   {
     name: "guedder_listar_lotes_evento",
     title: "Lotes do evento",
-    description: "Lista os lotes disponíveis para compra num evento.",
+    description:
+      "Lista os lotes públicos à venda de um evento, com preços. Input: eventoId (UUID ou código do evento). Use depois de localizar o evento.",
     openApiOperationId: "listarLotesPublicos",
-    inputSchema: { eventoId: z.string() },
+    inputSchema: { eventoId: z.string().describe("UUID ou código alfanumérico do evento") },
     auth: false,
     build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/lotes` }),
   },
   {
     name: "guedder_get_parametros_venda",
     title: "Parâmetros de venda do evento",
-    description: "Formas de pagamento e regras de venda de um evento. Pode retornar 404 se não configurado.",
+    description:
+      "Formas de pagamento aceitas e regras de venda de UM evento (parcelamento, PIX, cartão, taxa de serviço). Input: eventoId (UUID ou código do evento). Use depois de localizar o evento. 404 = organizador ainda não configurou (ainda não divulgado), não é erro nem significa evento inexistente.",
     openApiOperationId: "getParametrosVenda",
-    inputSchema: { eventoId: z.string() },
+    inputSchema: { eventoId: z.string().describe("UUID ou código alfanumérico do evento") },
     auth: false,
     build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/parametros-venda` }),
   },
   {
     name: "guedder_eventos_destaque",
     title: "Eventos em destaque",
-    description: "Lista os eventos em destaque na home da Guedder (seções e listas principais). Sem parâmetros.",
+    description:
+      "Lista os eventos em destaque na home da Guedder (seções e carrosséis principais). Sem input. Use quando perguntam o que está em cartaz agora, ou para obter ids de evento sem uma busca por nome.",
     openApiOperationId: "getEventosDestaque",
     inputSchema: {},
     auth: false,
@@ -372,8 +378,24 @@ const TOOLS: Tool[] = [
   },
 ];
 
+const INSTRUCTIONS = `MCP readonly sobre a API Guedder v3 (plataforma de venda de ingressos). Só GETs — nunca muta nada.
+
+Fluxo para responder sobre um evento, sempre nesta ordem:
+1. Ache o evento e o id: guedder_listar_eventos (busca por nome/cidade/categoria) ou guedder_eventos_destaque (o que está em cartaz). O id é UUID ou código alfanumérico.
+2. Com o id, consulte o que a pergunta pede:
+   - data, local, dados básicos -> guedder_get_evento
+   - line-up / atrações -> guedder_listar_atracoes_evento
+   - lotes e preços -> guedder_listar_lotes_evento
+   - formas de pagamento e regras de venda -> guedder_get_parametros_venda (pode dar 404 se o organizador não configurou; isso significa "ainda não divulgado", não "evento inexistente")
+   - categorias disponíveis para filtrar -> guedder_listar_categorias_evento
+
+Regras:
+- Nunca invente id, data, preço ou regra. Se uma tool não devolver, diga que não tem a informação.
+- Toda tool devolve o JSON cru em content e em structuredContent.result. O schema de saída detalhado de cada tool está no resource guedder://openapi/v3/tools/<nome_da_tool>; o índice compacto de todas as operações está em guedder://openapi/v3.
+- Com GUEDDER_MCP_PUBLIC_ONLY=1 (agentes de comprador) só as 7 tools públicas de evento acima ficam disponíveis. As demais (ingressos, compras, auditoria, administrativo) exigem um token Guedder e perfil compatível.`;
+
 function createMcpServer(caller?: Caller): McpServer {
-  const server = new McpServer({ name: "guedder-ops", version: "0.1.0" });
+  const server = new McpServer({ name: "guedder-ops", version: "0.1.0" }, { instructions: INSTRUCTIONS });
   server.registerResource(
     "guedder_openapi_v3_index",
     "guedder://openapi/v3",
