@@ -64,15 +64,29 @@ Os escopos vêm prefixados pelo identificador do resource server
 Fonte da verdade dos escopos: `guedder/identity/staging/cognito.tf` no repo
 `infra`. Mudar lá exige mudar `GUEDDER_MCP_SCOPES` aqui.
 
+O `consentido` que autoriza o redirect é um HMAC do próprio pedido (client_id,
+redirect_uri, state, code_challenge), emitido só ao renderizar a tela e válido
+por 10 a 20 minutos. A primeira versão usava o literal `consentido=1`, e como
+quem monta a URL do `/authorize` é o cliente MCP, bastava acrescentar o
+parâmetro para pular a tela inteira.
+
 ### Teto conhecido
 
-O app client é público (PKCE, sem secret), então o `client_id` não é segredo e
-um cliente malicioso pode ir direto ao `/authorize` do Cognito, pulando esta
-tela. O que limita o estrago continua sendo a lista de escopos do app client e a
-de `callback_urls`. Fechar isso exige client confidencial com o secret só neste
-servidor, e o MCP passando a emitir a sessão (molde: `CheckinSessionTokenService`
-no guedder-api). É o passo para quando aparecer cliente de terceiro não
-confiável, e não se paga enquanto o cliente é o plugin da própria Guedder.
+Duas coisas que a tela **não** garante, e é melhor saber quais são:
+
+1. **A tela é pública, então um cliente determinado pode buscá-la, extrair a
+   prova e repeti-la** sem nunca mostrá-la a ninguém. O HMAC eleva a barra de
+   "somar um parâmetro" para "buscar e repetir", e fecha o caso do cliente que
+   pula por descuido. Não fecha o caso do cliente deliberado.
+2. **O app client é público** (PKCE, sem secret), então o `client_id` não é
+   segredo e dá para ir direto ao `/authorize` do Cognito, contornando este
+   servidor.
+
+Os dois se fecham com a mesma mudança: tornar o app client confidencial, com o
+secret só neste servidor, e o MCP passando a emitir a sessão (molde:
+`CheckinSessionTokenService` no guedder-api). É o passo para quando aparecer
+cliente de terceiro não confiável, e não se paga enquanto o cliente é o plugin
+da própria Guedder.
 
 As ferramentas públicas não precisam de token. Estas exigem `GUEDDER_BEARER_TOKEN`:
 `guedder_buscar_ingressos_evento`, `guedder_meus_ingressos`, `guedder_minhas_compras`,

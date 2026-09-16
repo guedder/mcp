@@ -11,7 +11,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
@@ -553,7 +553,14 @@ function createMcpServer(caller?: Caller): McpServer {
       async (args: any) => {
         const pedidoId = String(args?.pedidoId ?? "");
         try {
-          if (AUTH) exigirEscopo(caller!, "pedido:cancelar");
+          // `caller?` e não `caller!`: com Cognito ligado e transporte stdio o
+          // servidor sobe sem caller, e o `!` derefava undefined, devolvendo um
+          // TypeError no lugar do erro de autenticação. Fechava do lado certo,
+          // mas com a mensagem errada.
+          if (AUTH) {
+            if (!caller) throw new AuthError("Token ausente: esta tool age em nome de alguém.");
+            exigirEscopo(caller, "pedido:cancelar");
+          }
 
           const esperado = codigoDeConfirmacao(pedidoId, caller);
           if (args?.confirmacao !== esperado) {
@@ -742,9 +749,9 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
       // está no app client e o cliente pede, ele emite sem perguntar nada à
       // pessoa (`prompt=consent` só é repassado a IdP externo). Como já somos o
       // front door do /authorize, é aqui que a pessoa escolhe.
-      if (pedido.get("consentido") !== "1") {
+      if (!consentiuDeVerdade(pedido)) {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(telaDeConsent(pedido, AUTH.scopes ?? [], AUTH.resource));
+        res.end(telaDeConsent(pedido, escoposConcediveis(AUTH), AUTH.resource));
         return;
       }
 
@@ -758,7 +765,7 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
       // Cognito não conhece ainda seria ignorado por ele, mas escopo que ele
       // conhece e nós não anunciamos passaria direto.
       const pedidos = new Set(pedido.getAll("scope").flatMap((s) => s.split(/\s+/)).filter(Boolean));
-      const concedidos = (AUTH.scopes ?? []).filter((s) => pedidos.has(s));
+      const concedidos = escoposConcediveis(AUTH).filter((s) => pedidos.has(s));
       destino.searchParams.set("scope", concedidos.join(" "));
 
       // RFC 8707: sem isto o access token sai sem `aud` e a amarração de
@@ -937,6 +944,23 @@ const REDIGIR = new Set(["code", "code_verifier", "client_secret", "refresh_toke
 const ESCOPOS_DE_IDENTIDADE = new Set(["openid", "email", "profile", "phone"]);
 
 /**
+ * O que este servidor aceita conceder, com `openid` garantido.
+ *
+ * `GUEDDER_MCP_SCOPES` precisa espelhar o `allowed_oauth_scopes` do Terraform, e
+ * listar ali só os escopos customizados é um erro plausível. Sem `openid` o
+ * authorize sai sem escopo de identidade, então não vem id_token nem a claim
+ * `email`, e o verifier recusa todo token com "Token sem email". Falha que só
+ * aparece no login real, nunca em teste.
+ *
+ * Um lugar só, porque o formulário e a interseção precisam concordar: garantir
+ * `openid` no HTML e deixá-lo cair na interseção não consertaria nada.
+ */
+function escoposConcediveis(cfg: { scopes?: string[] }): string[] {
+  const lista = cfg.scopes ?? [];
+  return lista.includes("openid") ? lista : ["openid", ...lista];
+}
+
+/**
  * O que cada escopo autoriza, na língua de quem vai decidir. Escopo sem texto
  * aqui aparece pelo nome cru — feio, e de propósito: é o lembrete de que escopo
  * novo sem explicação é permissão que a pessoa concede sem entender.
@@ -946,6 +970,55 @@ const TEXTO_DO_ESCOPO: Record<string, string> = {
   "pedido:cancelar":
     "Cancelar pedidos seus, o que devolve o valor pelo mesmo meio de pagamento. O agente vai pedir sua confirmação antes de cada cancelamento",
 };
+
+/**
+ * Prova de que a tela de consent foi renderizada para ESTE pedido de autorização.
+ *
+ * A primeira versão usava um literal (`consentido=1`), e quem monta a URL do
+ * /authorize é o cliente MCP: bastava acrescentar o parâmetro para o servidor
+ * conceder sem nunca mostrar a tela, e a pessoa via só o login do Cognito, que
+ * não exibe escopo nenhum. O parâmetro precisa ser algo que o cliente não
+ * consiga escrever sozinho.
+ *
+ * Amarrada ao pedido (client_id, redirect_uri, state, code_challenge), para não
+ * virar passe reutilizável em outro redirect_uri. A janela de tempo vem em
+ * blocos de 10 minutos, e aceitamos o bloco atual e o anterior: a pessoa está
+ * lendo a tela nesse meio tempo, e expirar no meio da leitura seria pior que o
+ * risco de uma prova velha.
+ *
+ * ponytail: HMAC sem estado, não nonce em banco. Um nonce de uso único não
+ * compraria o que parece comprar, porque a tela é pública e o cliente pode
+ * buscá-la para obter um nonce fresco. Isto eleva a barra de "somar um
+ * parâmetro" para "buscar a tela e repetir a prova", e fecha o caso do cliente
+ * que pula a tela por descuido. Fechar o caso do cliente deliberado é o mesmo
+ * passo já registrado no `telaDeConsent`: client confidencial e sessão emitida
+ * aqui.
+ */
+function provaDeConsent(pedido: URLSearchParams, deslocamento = 0): string {
+  const bloco = Math.floor(Date.now() / 600_000) - deslocamento;
+  return createHmac("sha256", SEGREDO_DE_CONFIRMACAO)
+    .update(
+      [
+        pedido.get("client_id") ?? "",
+        pedido.get("redirect_uri") ?? "",
+        pedido.get("state") ?? "",
+        pedido.get("code_challenge") ?? "",
+        bloco,
+      ].join("\n"),
+    )
+    .digest("base64url");
+}
+
+function consentiuDeVerdade(pedido: URLSearchParams): boolean {
+  const veio = pedido.get("consentido");
+  if (!veio) return false;
+  // Sem short-circuit por igualdade de string em cima de segredo: compara as
+  // duas janelas sempre, e o custo é irrelevante num caminho de navegador.
+  return [0, 1].some((d) => {
+    const esperado = provaDeConsent(pedido, d);
+    return veio.length === esperado.length && timingSafeEqual(Buffer.from(veio), Buffer.from(esperado));
+  });
+}
 
 function escaparHtml(valor: string): string {
   return valor.replace(
@@ -1030,7 +1103,7 @@ function telaDeConsent(pedido: URLSearchParams, anunciados: string[], resource: 
   <form method="GET" action="/authorize">
       ${ocultos}
       ${identidade}
-      <input type="hidden" name="consentido" value="1">
+      <input type="hidden" name="consentido" value="${escaparHtml(provaDeConsent(pedido))}">
       ${itens}
     <button type="submit">Continuar para o login</button>
   </form>

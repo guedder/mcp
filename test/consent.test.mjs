@@ -79,6 +79,17 @@ const PEDIDO_BASE =
   "response_type=code&client_id=cliente-do-agente&redirect_uri=http%3A%2F%2Flocalhost%3A6274%2Fcallback" +
   "&state=xyz&code_challenge=abc&code_challenge_method=S256";
 
+/**
+ * Pega a prova de consent como um navegador pegaria: renderizando a tela.
+ * Desde que `consentido` deixou de ser um literal, e o unico caminho honesto.
+ */
+async function provaDaTela(base, query) {
+  const html = await (await fetch(`${base}/authorize?${query}`)).text();
+  const prova = html.match(/name="consentido" value="([^"]+)"/)?.[1];
+  assert.ok(prova, "a tela tem que emitir a prova de consent");
+  return prova;
+}
+
 async function comAmbiente(fn) {
   const cognito = await cognitoFalso();
   const mcp = await subirMcp(cognito.issuer);
@@ -112,8 +123,10 @@ test("/authorize sem consentimento mostra a tela, não redireciona", async () =>
 test("consentimento leva ao Cognito só com o que foi marcado", async () => {
   await comAmbiente(async (base) => {
     // A pessoa marcou só leitura: deixou `pedido:cancelar` de fora.
+    const prova = await provaDaTela(base, PEDIDO_BASE);
     const res = await fetch(
-      `${base}/authorize?${PEDIDO_BASE}&consentido=1&scope=openid+email+profile+conta%3Aread`,
+      `${base}/authorize?${PEDIDO_BASE}&consentido=${encodeURIComponent(prova)}` +
+        `&scope=openid+email+profile+conta%3Aread`,
       { redirect: "manual" },
     );
 
@@ -144,8 +157,10 @@ test("consentimento leva ao Cognito só com o que foi marcado", async () => {
 // formulário é só uma sugestão e qualquer um monta a query que quiser.
 test("escopo que o servidor não anuncia não passa, mesmo forjado na query", async () => {
   await comAmbiente(async (base) => {
+    const prova = await provaDaTela(base, PEDIDO_BASE);
     const res = await fetch(
-      `${base}/authorize?${PEDIDO_BASE}&consentido=1&scope=openid+conta%3Aread+admin%3Atudo`,
+      `${base}/authorize?${PEDIDO_BASE}&consentido=${encodeURIComponent(prova)}` +
+        `&scope=openid+conta%3Aread+admin%3Atudo`,
       { redirect: "manual" },
     );
 
@@ -153,5 +168,58 @@ test("escopo que o servidor não anuncia não passa, mesmo forjado na query", as
     const escopos = (new URL(res.headers.get("location")).searchParams.get("scope") ?? "").split(/\s+/);
     assert.ok(!escopos.includes("admin:tudo"), "escopo fora do anunciado tem que ser descartado");
     assert.ok(escopos.includes("conta:read"));
+  });
+});
+
+// O ponto fraco que a revisão pegou: `consentido` era um literal que o cliente
+// escrevia sozinho. Quem monta a URL do /authorize é o cliente MCP, então
+// bastava acrescentar `consentido=1` e o servidor concedia sem nunca renderizar
+// a tela. A pessoa via só o login do Cognito, que não mostra escopo nenhum.
+test("consentimento forjado na query não vale, tem que vir da tela", async () => {
+  await comAmbiente(async (base) => {
+    const res = await fetch(
+      `${base}/authorize?${PEDIDO_BASE}&consentido=1&scope=openid+${encodeURIComponent("conta:read")}`,
+      { redirect: "manual" },
+    );
+
+    assert.equal(res.status, 200, "sem prova de que a tela foi renderizada, mostra a tela");
+    assert.match(res.headers.get("content-type") ?? "", /text\/html/);
+  });
+});
+
+test("o consentimento emitido pela tela é aceito", async () => {
+  await comAmbiente(async (base) => {
+    // Pega a prova como um navegador pegaria: renderizando a tela.
+    const tela = await (await fetch(`${base}/authorize?${PEDIDO_BASE}&scope=openid`)).text();
+    const prova = tela.match(/name="consentido" value="([^"]+)"/)?.[1];
+    assert.ok(prova && prova !== "1", `a tela tem que emitir uma prova, veio: ${prova}`);
+
+    const res = await fetch(
+      `${base}/authorize?${PEDIDO_BASE}&consentido=${encodeURIComponent(prova)}&scope=openid`,
+      { redirect: "manual" },
+    );
+
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get("location"), /amazoncognito\.com/);
+  });
+});
+
+// A prova é de UM pedido de autorização. Sem isso ela viraria um passe
+// reutilizável em qualquer redirect_uri.
+test("prova de um pedido não serve para outro redirect_uri", async () => {
+  await comAmbiente(async (base) => {
+    const tela = await (await fetch(`${base}/authorize?${PEDIDO_BASE}&scope=openid`)).text();
+    const prova = tela.match(/name="consentido" value="([^"]+)"/)?.[1];
+
+    const outro = PEDIDO_BASE.replace(
+      "redirect_uri=http%3A%2F%2Flocalhost%3A6274%2Fcallback",
+      "redirect_uri=https%3A%2F%2Fatacante.example%2Fcallback",
+    );
+    const res = await fetch(
+      `${base}/authorize?${outro}&consentido=${encodeURIComponent(prova)}&scope=openid`,
+      { redirect: "manual" },
+    );
+
+    assert.equal(res.status, 200, "prova de outro pedido não pode redirecionar");
   });
 });
