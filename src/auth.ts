@@ -16,6 +16,17 @@ export type Caller = {
   usuarioId?: string;
   role?: string;
   isAdmin: boolean;
+  /**
+   * O que a pessoa autorizou o agente a fazer por ela, congelado na emissão do
+   * token — mesmo desenho da sessão de check-in (`CheckinSessionTokenService`),
+   * que calcula os escopos uma vez e não reconsulta.
+   *
+   * Papel e escopo respondem perguntas diferentes: `role` diz até onde a pessoa
+   * alcança, `scopes` diz o que ela deixou o agente alcançar em nome dela. Admin
+   * não fura escopo — se furasse, o consent viraria enfeite para justo quem tem
+   * mais a perder.
+   */
+  scopes: string[];
 };
 
 export type AuthConfig = {
@@ -59,10 +70,25 @@ export function createVerifier(cfg: AuthConfig) {
       throw new AuthError(`Token inválido: ${e?.code ?? e?.message ?? "verificação falhou"}`);
     }
 
-    // Access token do Cognito não tem `aud`; a amarração de superfície é pelo client_id.
-    // Token do app web (outro client) não serve aqui, mesmo sendo do mesmo usuário.
+    // Access token do Cognito só tem `aud` quando o cliente pede resource binding
+    // (RFC 8707, `resource=` no /authorize). Quando vem, é a amarração forte de
+    // superfície e vale mais que o client_id, porque é o Cognito afirmando para
+    // QUEM o token serve. Quando não vem, o client_id é o que temos.
+    //
+    // Os dois convivem de propósito: cliente MCP que não manda `resource` continua
+    // funcionando, e exigir `aud` de largada arrancaria do ar todo token já emitido.
+    // As duas checagens somam, não se substituem. `aud` sozinho não bastaria:
+    // qualquer app client do pool pode pedir `resource=` com a NOSSA URL, então
+    // audiência certa com client errado seria token do app web entrando aqui.
     if (cfg.clientId && payload.client_id !== cfg.clientId) {
       throw new AuthError("Token emitido para outro client.");
+    }
+    const aud = payload.aud;
+    if (aud !== undefined) {
+      const audiencias = Array.isArray(aud) ? aud : [aud];
+      if (!audiencias.includes(cfg.resource)) {
+        throw new AuthError(`Token com audiência de outro recurso: ${audiencias.join(", ")}.`);
+      }
     }
 
     const email = (payload.email ?? payload["cognito:username"]) as string | undefined;
@@ -81,11 +107,61 @@ export function createVerifier(cfg: AuthConfig) {
       // até para admin. Passou despercebido porque enquanto o Postgres estava
       // inalcançável nenhum token trazia `custom:*`, e a recusa parecia certa.
       isAdmin: role === "ADMIN",
+      // Ausência é conjunto vazio, nunca "tudo". Token emitido antes do consent
+      // existir não pode virar passe livre no dia em que o gate entrar.
+      scopes: escoposDoToken(payload.scope, cfg.resource),
     };
   };
 }
 
 export class AuthError extends Error {}
+
+export class EscopoError extends Error {}
+
+/**
+ * Escopos NOSSOS, com o prefixo do resource server removido.
+ *
+ * No Cognito o identificador do resource server vira prefixo do escopo dentro do
+ * token: `conta:read` declarado em `https://mcp.guedder.com/mcp` chega como
+ * `https://mcp.guedder.com/mcp/conta:read`. O n8n já convive com isso no resource
+ * server da API.
+ *
+ * O prefixo é descascado aqui, num lugar só, para que o resto do servidor fale
+ * `pedido:cancelar` e não uma URL. Se ele vazasse para o gate de cada tool,
+ * trocar o host do MCP viraria mudança de autorização.
+ *
+ * Escopo de OUTRO resource server é descartado, não aceito pelo sufixo: sem
+ * isso, `https://api.guedder.com/pedido:cancelar` — emitido para a API, por
+ * outro consentimento — abriria a tool de cancelamento daqui. Os escopos de
+ * identidade (`openid`, `email`, `profile`) não têm prefixo e também saem: eles
+ * dizem quem é a pessoa, não o que ela autorizou.
+ */
+export function escoposDoToken(scope: unknown, resource: string): string[] {
+  if (typeof scope !== "string") return [];
+  const prefixo = `${resource.replace(/\/+$/, "")}/`;
+  return scope
+    .split(/\s+/)
+    .filter((s) => s.startsWith(prefixo))
+    .map((s) => s.slice(prefixo.length))
+    .filter(Boolean);
+}
+
+/**
+ * Portão único de escopo (ADR 0001 §9.4: "um único ponto de checagem" — espalhar
+ * `if` por tool faz de cada client novo uma caçada).
+ *
+ * Não existe bypass de admin aqui, e a omissão é o ponto: `isAdmin` responde
+ * "até onde esta pessoa alcança", e escopo responde "o que ela autorizou o
+ * agente a fazer por ela". Um admin que conectou o agente só para leitura não
+ * autorizou cancelamento, e é justamente no admin que o estrago seria maior.
+ */
+export function exigirEscopo(caller: Caller, escopo: string): void {
+  if (!caller.scopes.includes(escopo)) {
+    throw new EscopoError(
+      `O agente não recebeu o escopo \`${escopo}\`. A pessoa precisa reconectar autorizando essa permissão.`,
+    );
+  }
+}
 
 /**
  * RFC 9728: como o cliente MCP descobre onde autenticar depois de tomar 401.

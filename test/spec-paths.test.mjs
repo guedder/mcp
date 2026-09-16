@@ -16,10 +16,21 @@ function sampleArgs(schema) {
   return out;
 }
 
+/**
+ * Tools que NAO mapeiam para uma operacao GET da spec, cada uma por um motivo
+ * declarado. Lista curta de propósito: acrescentar nome aqui é mudança de
+ * segurança, e o ADR 0001 §9.4 do repo auth pede que ela seja revisada como tal,
+ * não absorvida como detalhe.
+ *
+ *   guedder_rastrear_compra  — não fala com a API; usa a credencial AWS da task.
+ *   guedder_cancelar_pedido  — escreve (POST); coberto por escrita.test.mjs.
+ */
+const FORA_DO_CONTRATO_GET = new Set(["guedder_rastrear_compra", "guedder_cancelar_pedido"]);
+
 test("cada tool chama o path e os query params da sua operacao OpenAPI", async () => {
   const seen = [];
   const server = http.createServer((request, response) => {
-    seen.push(new URL(request.url, "http://localhost"));
+    seen.push(Object.assign(new URL(request.url, "http://localhost"), { metodo: request.method }));
     response.writeHead(200, { "content-type": "application/json" });
     response.end("{}");
   });
@@ -41,7 +52,7 @@ test("cada tool chama o path e os query params da sua operacao OpenAPI", async (
     const { tools } = await client.listTools();
     assert.ok(tools.length > 0);
     for (const tool of tools) {
-      if (tool.name === "guedder_rastrear_compra") continue;
+      if (FORA_DO_CONTRATO_GET.has(tool.name)) continue;
       const resource = await client.readResource({ uri: `guedder://openapi/v3/tools/${tool.name}` });
       const spec = JSON.parse(resource.contents[0].text);
       const [specPath, methods] = Object.entries(spec.paths)[0];
@@ -59,6 +70,10 @@ test("cada tool chama o path e os query params da sua operacao OpenAPI", async (
       const result = await client.callTool({ name: tool.name, arguments: sampleArgs(tool.inputSchema) });
       assert.notEqual(result.isError, true, `${tool.name}: ${result.content?.[0]?.text}`);
       assert.equal(seen.length, 1, `${tool.name} deve fazer exatamente um GET`);
+      // O verbo, e nao so a contagem. Ate agora "read-only" era inferido de o
+      // servidor so ter `apiGet`; desde que existe `apiPost`, a propriedade
+      // precisa ser afirmada onde ela pode ser quebrada.
+      assert.equal(seen[0].metodo, "GET", `${tool.name} escreveu, e nao esta na lista de escrita`);
       assert.match(seen[0].pathname, pattern, `${tool.name}: ${seen[0].pathname} nao casa com ${specPath} (${operation.operationId})`);
       if (skipQueryCheck) continue;
       for (const key of seen[0].searchParams.keys()) {

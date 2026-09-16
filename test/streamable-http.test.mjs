@@ -35,7 +35,7 @@ test("expõe ferramentas via Streamable HTTP stateless em /mcp", async () => {
     const body = await response.text();
     const json = body.match(/^data: (.+)$/m)?.[1] ?? body;
     const payload = JSON.parse(json);
-    assert.equal(payload.result.tools.length, 18);
+    assert.equal(payload.result.tools.length, 19); // 18 de leitura + guedder_cancelar_pedido
     assert.equal(payload.result.tools[0].annotations.readOnlyHint, true);
     assert.equal(payload.result.tools[0].annotations.destructiveHint, false);
     assert.equal(payload.result.tools[0].annotations.idempotentHint, true);
