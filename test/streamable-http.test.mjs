@@ -35,15 +35,16 @@ test("expõe ferramentas via Streamable HTTP stateless em /mcp", async () => {
     const body = await response.text();
     const json = body.match(/^data: (.+)$/m)?.[1] ?? body;
     const payload = JSON.parse(json);
-    assert.equal(payload.result.tools.length, 19); // 18 de leitura + guedder_cancelar_pedido
+    // 12 tools genéricas de leitura + descobrir_eventos + detalhes_evento +
+    // status_da_compra (compostas) + cancelar_pedido (escrita). rastrear_compra
+    // não conta aqui: exige GUEDDER_MCP_LOG_GROUPS, ausente neste teste.
+    assert.equal(payload.result.tools.length, 16);
     assert.equal(payload.result.tools[0].annotations.readOnlyHint, true);
     assert.equal(payload.result.tools[0].annotations.destructiveHint, false);
     assert.equal(payload.result.tools[0].annotations.idempotentHint, true);
-    const destaque = payload.result.tools.find((item) => item.name === "guedder_eventos_destaque");
-    assert.ok(destaque, "missing guedder_eventos_destaque");
-    assert.deepEqual(Object.keys(destaque.inputSchema.properties ?? {}), []);
+    const destaque = payload.result.tools.find((item) => item.name === "guedder_descobrir_eventos");
+    assert.ok(destaque, "missing guedder_descobrir_eventos");
     for (const name of [
-      "guedder_listar_eventos",
       "guedder_buscar_ingressos_evento",
       "guedder_minhas_compras",
       "guedder_buscar_compras_evento",
@@ -85,14 +86,13 @@ test("GUEDDER_MCP_PUBLIC_ONLY=1 registra apenas as tools publicas", async () => 
     const body = await response.text();
     const payload = JSON.parse(body.match(/^data: (.+)$/m)?.[1] ?? body);
     const names = payload.result.tools.map((tool) => tool.name).sort();
+    // guedder_descobrir_eventos e guedder_detalhes_evento são registradas sem
+    // olhar PUBLIC_ONLY (são sempre auth:false); guedder_status_da_compra é
+    // gated por `!PUBLIC_ONLY` porque exige login.
     assert.deepEqual(names, [
-      "guedder_eventos_destaque",
-      "guedder_get_evento",
-      "guedder_get_parametros_venda",
-      "guedder_listar_atracoes_evento",
+      "guedder_descobrir_eventos",
+      "guedder_detalhes_evento",
       "guedder_listar_categorias_evento",
-      "guedder_listar_eventos",
-      "guedder_listar_lotes_evento",
     ]);
   } finally {
     process.kill();
@@ -129,8 +129,8 @@ test("o handshake initialize traz instructions com o fluxo de uso", async () => 
     const payload = JSON.parse(body.match(/^data: (.+)$/m)?.[1] ?? body);
     const instructions = payload.result.instructions;
     assert.ok(instructions && instructions.length > 200, "instructions ausente ou curto demais");
-    assert.match(instructions, /guedder_listar_eventos/);
-    assert.match(instructions, /guedder_get_parametros_venda/);
+    assert.match(instructions, /guedder_descobrir_eventos/);
+    assert.match(instructions, /guedder_detalhes_evento/);
     assert.match(instructions, /404/);
     assert.match(instructions, /guedder:\/\/openapi\/v3/);
 

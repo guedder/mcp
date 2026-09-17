@@ -91,7 +91,7 @@ da própria Guedder.
 
 As ferramentas públicas não precisam de token. Estas exigem `GUEDDER_BEARER_TOKEN`:
 `guedder_buscar_ingressos_evento`, `guedder_meus_ingressos`, `guedder_minhas_compras`,
-`guedder_get_lote`, `guedder_usuario_logado`.
+`guedder_status_da_compra`, `guedder_get_lote`, `guedder_usuario_logado`.
 
 ## Build
 
@@ -117,8 +117,9 @@ Cada ferramenta devolve o JSON original em `content` e também em
 `structuredContent.result`, coberto por `outputSchema`. Para reduzir contexto no
 harness, `guedder://openapi/v3` é apenas um índice compacto; cada ferramenta
 aponta para seu resource específico, como
-`guedder://openapi/v3/tools/guedder_listar_eventos`, que contém somente sua
-operação e os componentes OpenAPI referenciados.
+`guedder://openapi/v3/tools/guedder_listar_categorias_evento`, que contém somente sua
+operação e os componentes OpenAPI referenciados. Nas tools compostas (abaixo), o
+resource lista TODAS as operações que ela pode chamar.
 
 `npm run sync:openapi-v3` baixa `https://dev-api.guedder.com/v3/api-docs`, mantém
 somente operações `GET /api/v3/**` e os componentes OpenAPI referenciados. Rode-o
@@ -126,25 +127,29 @@ quando precisar atualizar os schemas antes de publicar uma nova versão do MCP.
 
 ## Tools
 
-O servidor manda um bloco `instructions` no handshake MCP com o fluxo de uso
-(achar o evento e o id → consultar por id) e as regras (nunca inventar id, 404 em
-`parametros-venda` = "ainda não divulgado"). As skills em `skills/` detalham:
-`guedder-mcp-consultar-evento-ao-vivo` (fluxo das tools públicas) e
-`guedder-mcp-auth-cognito` (como a auth liga).
+O servidor manda um bloco `instructions` no handshake MCP com o fluxo de uso e as
+regras. As skills em `skills/` detalham: `guedder-mcp-consultar-evento-ao-vivo`
+(fluxo das tools públicas) e `guedder-mcp-auth-cognito` (como a auth liga).
 
-| Tool | Auth | v3 endpoint |
+### Por tarefa, não por endpoint
+
+As tools do comprador são desenhadas pela **tarefa** que respondem, não por
+endpoint da API — o endpoint concreto é detalhe de implementação. Uma tool pode
+chamar mais de uma operação por dentro; nesses casos, o resource
+`guedder://openapi/v3/tools/<nome>` lista todas, e `test/spec-paths.test.mjs`
+declara a tool como exceção nomeada (comentário no arquivo explica o motivo de
+cada uma).
+
+| Tool | Auth | Substitui / compõe |
 |---|---|---|
-| `guedder_listar_eventos` | — | `GET /api/v3/eventos` (MCP: `max_results`; página 1, pois a API pagina a partir de 1) |
-| `guedder_get_evento` | — | `GET /api/v3/eventos/{id}` |
-| `guedder_listar_categorias_evento` | — | `GET /api/v3/categorias-evento` |
-| `guedder_listar_atracoes_evento` | — | `GET /api/v3/eventos/{eventoId}/atracoes` |
-| `guedder_listar_lotes_evento` | — | `GET /api/v3/eventos/{eventoId}/lotes` |
-| `guedder_get_parametros_venda` | — | `GET /api/v3/eventos/{eventoId}/parametros-venda` |
-| `guedder_eventos_destaque` | — | `GET /api/v3/home/destaques` |
+| `guedder_descobrir_eventos` | — | Sem filtro: `GET /home/destaques`. Com cidade/estado/categoria/busca: `GET /eventos` (MCP: `max_results`; página 1, a API pagina a partir de 1). Substitui `guedder_listar_eventos` + `guedder_eventos_destaque`. |
+| `guedder_detalhes_evento` | — | `GET /eventos/{id}` sempre; `incluir: ["atracoes","lotes","venda"]` soma `GET .../atracoes`, `.../lotes`, `.../parametros-venda` (404 nesta última = `parametrosVenda: null`, "ainda não divulgado"). Substitui `guedder_get_evento` + `guedder_listar_atracoes_evento` + `guedder_listar_lotes_evento` + `guedder_get_parametros_venda`. |
+| `guedder_listar_categorias_evento` | — | `GET /api/v3/categorias-evento` (já era tarefa de um endpoint só; não mudou) |
+| `guedder_meus_ingressos` | ✅ `conta:read` | `GET /api/v3/ingressos` |
+| `guedder_minhas_compras` | ✅ `conta:read` | `GET /api/v3/compras` (MCP: `max_results`, sempre página 0) |
+| `guedder_status_da_compra` | ✅ `conta:read` | Agrega `GET /api/v3/ingressos` por `idPedido`. **Não existia como endpoint**: `ResumoTicketsVO` (resposta de `/compras`) não expõe nenhum id — só o ingresso tem `idPedido`. |
 | `guedder_get_lote` | ✅ | `GET /api/v3/eventos/{codigoOrEventoId}/lotes/{codigoOrLoteId}` |
 | `guedder_buscar_ingressos_evento` | ✅ | `GET /api/v3/eventos/{eventoId}/ingressos` (MCP: `max_results`, sempre página 0) |
-| `guedder_meus_ingressos` | ✅ | `GET /api/v3/ingressos` |
-| `guedder_minhas_compras` | ✅ | `GET /api/v3/compras` (MCP: `max_results`, sempre página 0) |
 | `guedder_buscar_compras_evento` | ✅ | `GET /api/v2/compra/evento/{eventoId}/extrato` (MCP: `max_results`, sempre página 0) |
 | `guedder_auditar_vendas_evento` | ✅ | `GET /api/v1/metrica/{eventoId}/ultimas-vendas` (auditoria operacional; MCP: `max_results`, sempre página 0) |
 | `guedder_resumo_vendas_evento` | ✅ | `GET /api/v1/metrica/{eventoId}/resumo-vendas` |
@@ -153,6 +158,13 @@ O servidor manda um bloco `instructions` no handshake MCP com o fluxo de uso
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
 | `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/perfil` |
 | `guedder_cancelar_pedido` | ✅ `pedido:cancelar` | `POST /api/v3/pedidos/{pedidoId}/cancelamento` |
+
+Escopo `conta:read` existia no resource server e na tela de consent desde a v2
+(ver seção de auth abaixo) mas **nenhuma tool o exigia** — a pessoa concedia e a
+concessão não valia nada. Corrigido ao consolidar: `meus_ingressos`,
+`minhas_compras` e `status_da_compra` agora passam por `exigirEscopo`. As tools
+de staff/admin (buscar_ingressos_evento, get_lote, financeiro) ainda não têm
+escopo próprio — ficam de fora deste corte por não serem persona Comprador.
 
 ### A tool de escrita
 
