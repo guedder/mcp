@@ -401,19 +401,24 @@ endpoints seguem em 0. Isso não é generalizável: confirme no controller.
 
 ### Tools de hoje
 
+A tabela completa e sempre atual é a do README (ela é editada no mesmo PR que muda
+uma tool, esta aqui não é). Desde a ADR 0004, `guedder_descobrir_eventos` e
+`guedder_detalhes_evento` substituem `guedder_listar_eventos`,
+`guedder_eventos_destaque`, `guedder_get_evento`, `guedder_listar_atracoes_evento`,
+`guedder_listar_lotes_evento` e `guedder_get_parametros_venda` — e
+`guedder_status_da_compra` é tool nova, agregando `/api/v3/ingressos` (ver ADR 0004
+para o porquê de não ser reforma de `guedder_minhas_compras`).
+
 | Tool | Auth | Endpoint |
 |---|---|---|
-| `guedder_listar_eventos` | — | `GET /api/v3/eventos` |
-| `guedder_get_evento` | — | `GET /api/v3/eventos/{id}` |
+| `guedder_descobrir_eventos` | — | Sem filtro: `GET /home/destaques`. Com filtro: `GET /eventos`. |
+| `guedder_detalhes_evento` | — | `GET /eventos/{id}` + até `atracoes`/`lotes`/`parametros-venda`, conforme `incluir` |
 | `guedder_listar_categorias_evento` | — | `GET /api/v3/categorias-evento` |
-| `guedder_listar_atracoes_evento` | — | `GET /api/v3/eventos/{id}/atracoes` |
-| `guedder_listar_lotes_evento` | — | `GET /api/v3/eventos/{id}/lotes` |
-| `guedder_get_parametros_venda` | — | `GET /api/v3/eventos/{id}/parametros-venda` |
-| `guedder_eventos_destaque` | — | `GET /api/v3/home/destaques` |
 | `guedder_get_lote` | ✅ | `GET /api/v3/eventos/{id}/lotes/{id}` |
 | `guedder_buscar_ingressos_evento` | ✅ | `GET /api/v3/eventos/{id}/ingressos` |
-| `guedder_meus_ingressos` | ✅ | `GET /api/v3/ingressos` |
-| `guedder_minhas_compras` | ✅ | `GET /api/v3/compras` |
+| `guedder_meus_ingressos` | ✅ `conta:read` | `GET /api/v3/ingressos` |
+| `guedder_minhas_compras` | ✅ `conta:read` | `GET /api/v3/compras` |
+| `guedder_status_da_compra` | ✅ `conta:read` | Agrega `GET /api/v3/ingressos` por `idPedido` |
 | `guedder_buscar_compras_evento` | ✅ | `GET /api/v2/compra/evento/{id}/extrato` |
 | `guedder_auditar_vendas_evento` | ✅ | `GET /api/v1/metrica/{id}/ultimas-vendas` |
 | `guedder_resumo_vendas_evento` | ✅ | `GET /api/v1/metrica/{id}/resumo-vendas` |
