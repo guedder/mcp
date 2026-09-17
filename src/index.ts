@@ -1095,18 +1095,85 @@ function telaDeConsent(pedido: URLSearchParams, anunciados: string[], resource: 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Conectar agente à sua conta Guedder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 0 auto; padding: 2rem 1rem; }
-  h1 { font-size: 1.3rem; }
-  .item { display: flex; gap: .75rem; align-items: flex-start; padding: .9rem;
-          border: 1px solid currentColor; border-radius: .5rem; margin-bottom: .6rem; }
-  .item code { display: block; opacity: .6; font-size: .8rem; }
-  button { font: inherit; padding: .7rem 1.4rem; border-radius: .5rem; cursor: pointer; }
-  .aviso { opacity: .75; font-size: .9rem; }
+  /* Tokens de design-system/variables.css (guedder_app + guedder-ng). Login não
+     carrega o CSS do front, então os valores que importam vêm hardcoded aqui —
+     atualizar os dois lados juntos se a marca mudar. */
+  :root {
+    color-scheme: light dark;
+    --cor-marca: #635BFF;
+    --cor-marca-fim-gradiente: #9A00FF;
+    --cor-perigo: #FF2952;
+    --cor-texto: #292929;
+    --cor-texto-suave: #666666;
+    --cor-superficie: #FFFFFF;
+    --cor-superficie-clara: #F9F9F9;
+    --cor-borda: #E4E4E4;
+    --sombra-card: 0 4px 15px rgba(102, 102, 102, .16);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --cor-texto: #FFFFFF;
+      --cor-texto-suave: #CCCCCC;
+      --cor-superficie: #1C1C1C;
+      --cor-superficie-clara: #282828;
+      --cor-borda: #333333;
+      --sombra-card: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 400 16px/1.5 "Open Sans", system-ui, sans-serif;
+    color: var(--cor-texto);
+    background: var(--cor-superficie-clara);
+    max-width: 34rem;
+    margin: 0 auto;
+    padding: 2.5rem 1.25rem;
+  }
+  .logo { height: 28px; margin-bottom: 1.75rem; }
+  .logo img { height: 100%; display: block; }
+  h1 { font-size: 1.35rem; font-weight: 700; margin: 0 0 .5rem; }
+  .aviso { color: var(--cor-texto-suave); font-size: .9rem; margin: 0 0 1.5rem; }
+  .item {
+    display: flex; gap: .75rem; align-items: flex-start;
+    padding: 1rem; margin-bottom: .75rem;
+    background: var(--cor-superficie);
+    border: 1px solid var(--cor-borda);
+    border-radius: 12pt;
+    box-shadow: var(--sombra-card);
+  }
+  .item input[type=checkbox] { accent-color: var(--cor-marca); width: 18px; height: 18px; margin-top: 2px; flex-shrink: 0; }
+  .item strong { font-weight: 600; }
+  .item code {
+    display: block; margin-top: .25rem; font-size: .78rem;
+    color: var(--cor-texto-suave); font-family: ui-monospace, monospace;
+  }
+  button {
+    font: 600 16px "Open Sans", system-ui, sans-serif;
+    color: #fff;
+    background: linear-gradient(135deg, var(--cor-marca) 0%, var(--cor-marca-fim-gradiente) 100%);
+    border: none;
+    padding: .9rem 1.6rem;
+    border-radius: 25pt;
+    letter-spacing: .015rem;
+    cursor: pointer;
+    width: 100%;
+    margin-top: .5rem;
+  }
+  button:hover { filter: brightness(1.05); }
+  .rodape { color: var(--cor-texto-suave); font-size: .85rem; margin-top: 1.5rem; }
 </style>
 </head>
 <body>
+  <div class="logo">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://static.guedder.com/emailphotos/logobrancabottom.png">
+      <img src="https://static.guedder.com/emailphotos/logoroxatop.png" alt="Guedder">
+    </picture>
+  </div>
   <h1>Conectar o agente à sua conta Guedder</h1>
   <p class="aviso">O agente vai agir <strong>em seu nome</strong>, com as permissões que você marcar.
   Você escolhe agora e pode reconectar com outras permissões depois.</p>
@@ -1117,7 +1184,7 @@ function telaDeConsent(pedido: URLSearchParams, anunciados: string[], resource: 
       ${itens}
     <button type="submit">Continuar para o login</button>
   </form>
-  <p class="aviso">Na próxima tela você entra com sua conta Guedder. Nada é autorizado antes disso.</p>
+  <p class="rodape">Na próxima tela você entra com sua conta Guedder. Nada é autorizado antes disso.</p>
 </body>
 </html>`;
 }
