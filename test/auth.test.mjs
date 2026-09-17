@@ -311,3 +311,40 @@ test("prefixo do resource server é removido do escopo", async () => {
   );
   assert.deepEqual(outro.scopes, []);
 });
+
+// A audiência é um identificador FIXO (`https://mcp.guedder.com/mcp`, igual em
+// staging e produção, porque é endereço e não ambiente). A URL pública onde o
+// servidor de fato responde é outra coisa, e em staging é outro host.
+//
+// Derivar uma da outra fazia o discovery anunciar endpoints num host que não
+// resolve: cliente MCP lê a metadata, segue para `https://mcp.guedder.com/authorize`
+// e não acha ninguém. Quebra silenciosa, porque o servidor sobe e o health check passa.
+test("URL pública é independente da audiência", async () => {
+  const doCognito = {
+    issuer: ISSUER,
+    authorization_endpoint: "https://exemplo.amazoncognito.com/oauth2/authorize",
+    token_endpoint: "https://exemplo.amazoncognito.com/oauth2/token",
+    jwks_uri: `${ISSUER}/.well-known/jwks.json`,
+  };
+  const cfg = {
+    issuer: ISSUER,
+    resource: "https://mcp.guedder.com/mcp",
+    publicUrl: "https://mcp.dev.services.guedder.com",
+  };
+
+  const doc = await authorizationServerMetadata(cfg, async () => ({ ok: true, json: async () => doCognito }));
+
+  assert.equal(doc.issuer, "https://mcp.dev.services.guedder.com");
+  assert.equal(doc.authorization_endpoint, "https://mcp.dev.services.guedder.com/authorize");
+  assert.equal(doc.token_endpoint, "https://mcp.dev.services.guedder.com/token");
+
+  const rec = protectedResourceMetadata(cfg);
+  // O `resource` NÃO acompanha o host: ele é a audiência que o token carrega.
+  assert.equal(rec.resource, "https://mcp.guedder.com/mcp");
+  assert.deepEqual(rec.authorization_servers, ["https://mcp.dev.services.guedder.com"]);
+});
+
+test("sem publicUrl, cai na origem da audiência (comportamento de hoje)", () => {
+  const rec = protectedResourceMetadata({ issuer: ISSUER, resource: "https://mcp.guedder.com/mcp" });
+  assert.deepEqual(rec.authorization_servers, ["https://mcp.guedder.com"]);
+});

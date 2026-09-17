@@ -31,8 +31,23 @@ export type Caller = {
 
 export type AuthConfig = {
   issuer: string;
-  /** Audiência esperada — o próprio servidor MCP. Separa esta superfície da API. */
+  /**
+   * Audiência esperada, e prefixo dos escopos customizados. É um IDENTIFICADOR
+   * fixo, igual em staging e produção: endereço, não ambiente (ADR 0001 §9.8 do
+   * repo auth). Trocá-lo invalida token em circulação.
+   */
   resource: string;
+  /**
+   * Onde este servidor de fato responde, que em staging NÃO é o host da
+   * audiência. Só a metadata usa isto.
+   *
+   * Existe separado porque derivar a URL pública da audiência fazia o discovery
+   * anunciar `https://mcp.guedder.com/authorize` num servidor que responde em
+   * `mcp.dev.services.guedder.com`. O cliente MCP lê a metadata, segue o
+   * endpoint anunciado e não acha ninguém, enquanto o serviço sobe e o health
+   * check passa.
+   */
+  publicUrl?: string;
   /** client_id do App Client do agente. Token de outro client é recusado. */
   clientId?: string;
   /**
@@ -49,6 +64,7 @@ export function authConfigFromEnv(): AuthConfig | null {
   return {
     issuer,
     resource: process.env.GUEDDER_MCP_RESOURCE?.trim() || "https://mcp.guedder.com/mcp",
+    publicUrl: process.env.GUEDDER_MCP_PUBLIC_URL?.trim() || undefined,
     clientId: process.env.GUEDDER_MCP_CLIENT_ID?.trim() || undefined,
     scopes: (process.env.GUEDDER_MCP_SCOPES?.trim() || "openid email profile").split(/\s+/),
   };
@@ -182,10 +198,15 @@ export function wwwAuthenticate(cfg: AuthConfig, metadataUrl: string): string {
   return `Bearer resource_metadata="${metadataUrl}", error="invalid_token"`;
 }
 
-/** Base pública deste servidor, derivada do `resource` (que já é <base>/mcp). */
+/**
+ * Base pública deste servidor.
+ *
+ * Cai na origem do `resource` quando `publicUrl` não vem, que é o caso de
+ * produção (lá os dois coincidem) e mantém o comportamento anterior.
+ */
 function asBaseUrl(cfg: AuthConfig): string {
-  const u = new URL(cfg.resource);
-  return u.origin;
+  if (cfg.publicUrl) return new URL(cfg.publicUrl).origin;
+  return new URL(cfg.resource).origin;
 }
 
 /**
