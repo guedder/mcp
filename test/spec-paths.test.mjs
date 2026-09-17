@@ -22,10 +22,22 @@ function sampleArgs(schema) {
  * segurança, e o ADR 0001 §9.4 do repo auth pede que ela seja revisada como tal,
  * não absorvida como detalhe.
  *
- *   guedder_rastrear_compra  — não fala com a API; usa a credencial AWS da task.
- *   guedder_cancelar_pedido  — escreve (POST); coberto por escrita.test.mjs.
+ *   guedder_rastrear_compra   — não fala com a API; usa a credencial AWS da task.
+ *   guedder_cancelar_pedido   — escreve (POST); coberto por escrita.test.mjs.
+ *   guedder_descobrir_eventos — compõe DUAS operacoes (destaques OU busca);
+ *                               coberto por comprador.test.mjs.
+ *   guedder_detalhes_evento   — compõe ATE QUATRO operacoes e agrega o resultado;
+ *                               coberto por comprador.test.mjs.
+ *   guedder_status_da_compra  — uma chamada, mas reshapeia o resultado (agrega
+ *                               por idPedido); coberto por comprador.test.mjs.
  */
-const FORA_DO_CONTRATO_GET = new Set(["guedder_rastrear_compra", "guedder_cancelar_pedido"]);
+const FORA_DO_CONTRATO_GET = new Set([
+  "guedder_rastrear_compra",
+  "guedder_cancelar_pedido",
+  "guedder_descobrir_eventos",
+  "guedder_detalhes_evento",
+  "guedder_status_da_compra",
+]);
 
 test("cada tool chama o path e os query params da sua operacao OpenAPI", async () => {
   const seen = [];

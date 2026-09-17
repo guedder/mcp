@@ -146,6 +146,14 @@ type Tool = {
   openApiOperationId: string;
   inputSchema: z.ZodRawShape;
   auth: boolean;
+  /**
+   * Escopo de consent exigido, além do login. Gap achado ao consolidar as tools
+   * do comprador: `conta:read` existe no Cognito e aparece na tela de consent,
+   * mas nenhuma tool de leitura o conferia — a pessoa concedia e a concessão não
+   * valia nada. `exigirEscopo` continua sendo o único portão (auth.ts), isto só
+   * decide QUAL escopo cada tool pede.
+   */
+  escopo?: string;
   build: (a: any) => { path: string; query?: Record<string, unknown> };
 };
 
@@ -205,91 +213,14 @@ const enc = encodeURIComponent;
 
 const TOOLS: Tool[] = [
   {
-    name: "guedder_listar_eventos",
-    title: "Listar eventos públicos",
-    description:
-      "Busca eventos públicos ativos por nome, cidade ou categoria. Use como PRIMEIRO passo para descobrir o id de um evento antes de consultar line-up, lotes ou formas de pagamento. Retorna id, nome, data e local de cada um. max_results: padrão 50, máximo 100 (sempre a primeira página). Filtros opcionais: filtro (texto no nome), nomeCidade, nomeEstado (sigla UF), categoriaEventoEnum.",
-    openApiOperationId: "listarEventos",
-    inputSchema: {
-      max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de eventos retornados; máximo 100"),
-      filtro: z.string().optional().describe("Busca por texto no nome do evento"),
-      nomeCidade: z.string().optional(),
-      nomeEstado: z.string().optional().describe("Sigla UF, ex: SP"),
-      categoriaEventoEnum: z.string().optional(),
-    },
-    auth: false,
-    // /api/v3/eventos e paginado a partir de 1 (page=0 -> 400). Os demais endpoints seguem em 0.
-    build: (a) => ({
-      path: "/api/v3/eventos",
-      query: {
-        page: 1,
-        page_size: a.max_results,
-        filtro: a.filtro,
-        nomeCidade: a.nomeCidade,
-        nomeEstado: a.nomeEstado,
-        categoriaEventoEnum: a.categoriaEventoEnum,
-      },
-    }),
-  },
-  {
-    name: "guedder_get_evento",
-    title: "Detalhe de evento",
-    description:
-      "Data, local e dados básicos de UM evento. Input: id (UUID ou código alfanumérico, obtido em guedder_listar_eventos ou guedder_eventos_destaque). Use para responder quando e onde é o evento.",
-    openApiOperationId: "getEventoById",
-    inputSchema: { id: z.string().describe("UUID ou código do evento") },
-    auth: false,
-    build: (a) => ({ path: `/api/v3/eventos/${enc(a.id)}` }),
-  },
-  {
     name: "guedder_listar_categorias_evento",
     title: "Listar categorias de evento",
     description:
-      "Lista as categorias de evento disponíveis (ex: show, festa, teatro). Sem input. Use antes de filtrar guedder_listar_eventos por categoria.",
+      "Lista as categorias de evento disponíveis (ex: show, festa, teatro). Sem input. Use antes de filtrar guedder_descobrir_eventos por categoria.",
     openApiOperationId: "listarCategoriasEvento",
     inputSchema: {},
     auth: false,
     build: () => ({ path: "/api/v3/categorias-evento" }),
-  },
-  {
-    name: "guedder_listar_atracoes_evento",
-    title: "Line-up do evento",
-    description:
-      "Lista as atrações / line-up de um evento. Input: eventoId (UUID ou código do evento). Use depois de localizar o evento com guedder_listar_eventos ou guedder_eventos_destaque.",
-    openApiOperationId: "listarAtracoesPorEvento",
-    inputSchema: { eventoId: z.string().describe("UUID ou código alfanumérico do evento") },
-    auth: false,
-    build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/atracoes` }),
-  },
-  {
-    name: "guedder_listar_lotes_evento",
-    title: "Lotes do evento",
-    description:
-      "Lista os lotes públicos à venda de um evento, com preços. Input: eventoId (UUID ou código do evento). Use depois de localizar o evento.",
-    openApiOperationId: "listarLotesPublicos",
-    inputSchema: { eventoId: z.string().describe("UUID ou código alfanumérico do evento") },
-    auth: false,
-    build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/lotes` }),
-  },
-  {
-    name: "guedder_get_parametros_venda",
-    title: "Parâmetros de venda do evento",
-    description:
-      "Formas de pagamento aceitas e regras de venda de UM evento (parcelamento, PIX, cartão, taxa de serviço). Input: eventoId (UUID ou código do evento). Use depois de localizar o evento. 404 = organizador ainda não configurou (ainda não divulgado), não é erro nem significa evento inexistente.",
-    openApiOperationId: "getParametrosVenda",
-    inputSchema: { eventoId: z.string().describe("UUID ou código alfanumérico do evento") },
-    auth: false,
-    build: (a) => ({ path: `/api/v3/eventos/${enc(a.eventoId)}/parametros-venda` }),
-  },
-  {
-    name: "guedder_eventos_destaque",
-    title: "Eventos em destaque",
-    description:
-      "Lista os eventos em destaque na home da Guedder (seções e carrosséis principais). Sem input. Use quando perguntam o que está em cartaz agora, ou para obter ids de evento sem uma busca por nome.",
-    openApiOperationId: "getEventosDestaque",
-    inputSchema: {},
-    auth: false,
-    build: () => ({ path: "/api/v3/home/destaques" }),
   },
   {
     name: "guedder_get_lote",
@@ -327,19 +258,21 @@ const TOOLS: Tool[] = [
     openApiOperationId: "getMeusIngressos",
     inputSchema: { status: z.string().optional(), eventoId: z.string().optional() },
     auth: true,
+    escopo: "conta:read",
     build: (a) => ({ path: "/api/v3/ingressos", query: { cicloDeVida: a.status, eventoId: a.eventoId } }),
   },
   {
     name: "guedder_minhas_compras",
     title: "Minhas compras",
     description:
-      "Histórico de compras do usuário autenticado. Retorna até max_results compras da primeira página; padrão 50 e máximo 100. sort padrão: dataCompra,desc.",
+      "Histórico de compras do usuário autenticado. Retorna até max_results compras da primeira página; padrão 50 e máximo 100. sort padrão: dataCompra,desc. Para o status de UM pedido específico, use guedder_status_da_compra.",
     openApiOperationId: "getMinhasCompras",
     inputSchema: {
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de compras retornadas; máximo 100"),
       sort: z.string().optional(),
     },
     auth: true,
+    escopo: "conta:read",
     build: (a) => ({ path: "/api/v3/compras", query: { page: 0, size: a.max_results, sort: a.sort } }),
   },
   {
@@ -439,19 +372,30 @@ const TOOLS: Tool[] = [
 
 const INSTRUCTIONS = `MCP sobre a API Guedder v3 (plataforma de venda de ingressos). Quase tudo é leitura; há UMA operação que muda estado, descrita no fim.
 
-Fluxo para responder sobre um evento, sempre nesta ordem:
-1. Ache o evento e o id: guedder_listar_eventos (busca por nome/cidade/categoria) ou guedder_eventos_destaque (o que está em cartaz). O id é UUID ou código alfanumérico.
-2. Com o id, consulte o que a pergunta pede:
-   - data, local, dados básicos -> guedder_get_evento
-   - line-up / atrações -> guedder_listar_atracoes_evento
-   - lotes e preços -> guedder_listar_lotes_evento
-   - formas de pagamento e regras de venda -> guedder_get_parametros_venda (pode dar 404 se o organizador não configurou; isso significa "ainda não divulgado", não "evento inexistente")
-   - categorias disponíveis para filtrar -> guedder_listar_categorias_evento
+Tools por TAREFA, não por endpoint — cada uma pode chamar mais de uma operação
+da API por dentro. O endpoint concreto não importa para decidir qual tool usar.
+
+Fluxo para responder sobre um evento:
+1. Ache o evento e o id: guedder_descobrir_eventos. Sem filtro nenhum, traz os
+   destaques da home (o que está em cartaz); com cidade/estado/categoria/busca,
+   procura no catálogo completo. O id é UUID ou código alfanumérico.
+2. Com o id, guedder_detalhes_evento. Sem \`incluir\`, só o básico (nome, data,
+   local). Peça \`incluir\` para o que mais faltar: line-up, lotes com preço,
+   formas de pagamento. parametrosVenda === null significa "organizador ainda
+   não divulgou" (404 internamente), não "evento inexistente".
+3. Categorias disponíveis para filtrar: guedder_listar_categorias_evento.
+
+Fluxo para responder sobre a conta da pessoa logada:
+- Ingressos: guedder_meus_ingressos.
+- Histórico de compras: guedder_minhas_compras.
+- Status de UM pedido específico (identificador = idPedido, que aparece nos
+  dois acima): guedder_status_da_compra — agrega todos os ingressos daquele
+  pedido num resultado só.
 
 Regras:
 - Nunca invente id, data, preço ou regra. Se uma tool não devolver, diga que não tem a informação.
 - Toda tool devolve o JSON cru em content e em structuredContent.result. O schema de saída detalhado de cada tool está no resource guedder://openapi/v3/tools/<nome_da_tool>; o índice compacto de todas as operações está em guedder://openapi/v3.
-- Com GUEDDER_MCP_PUBLIC_ONLY=1 (agentes de comprador) só as 7 tools públicas de evento acima ficam disponíveis. As demais (ingressos, compras, auditoria, administrativo) exigem um token Guedder e perfil compatível.
+- Com GUEDDER_MCP_PUBLIC_ONLY=1 (agentes de comprador) só guedder_descobrir_eventos, guedder_detalhes_evento e guedder_listar_categorias_evento ficam disponíveis. As demais (ingressos, compras, auditoria, administrativo) exigem um token Guedder e perfil compatível.
 
 Escrita — guedder_cancelar_pedido:
 É a única tool que muda estado. Cancela um pedido da pessoa logada e devolve o valor pelo mesmo meio de pagamento; não tem desfazer.
@@ -506,6 +450,10 @@ function createMcpServer(caller?: Caller): McpServer {
       },
       async (args: any) => {
         try {
+          if (AUTH && t.escopo) {
+            if (!caller) throw new AuthError("Token ausente: esta tool age em nome de alguém.");
+            exigirEscopo(caller, t.escopo);
+          }
           const { path, query } = t.build(args ?? {});
           const data = await apiGet(path, { query, auth: t.auth, caller });
           return {
@@ -514,6 +462,219 @@ function createMcpServer(caller?: Caller): McpServer {
           };
         } catch (e: any) {
           return { content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }], isError: true };
+        }
+      },
+    );
+  }
+
+  // ── Tools por tarefa (compostas) ────────────────────────────────────────────
+  // Substituem o desenho de 1 tool por endpoint para o comprador: cada uma
+  // compõe internamente uma ou mais chamadas GET, e o endpoint concreto vira
+  // detalhe de implementação, não superfície da tool. Não entram no array
+  // TOOLS porque `build()` genérico assume UMA chamada sem pós-processamento;
+  // estas decidem QUAL endpoint chamar, ou agregam mais de um resultado.
+  //
+  // Por isso também não passam pelo spec-paths.test.mjs (ver FORA_DO_CONTRATO_GET
+  // lá): o teste confere "uma tool = uma operação da spec", e estas são,
+  // deliberadamente, mais de uma.
+
+  server.registerResource(
+    "guedder_descobrir_eventos_schema",
+    "guedder://openapi/v3/tools/guedder_descobrir_eventos",
+    {
+      title: "Schema: Descobrir eventos",
+      description: "Duas operações compostas: getEventosDestaque (sem filtro) e listarEventos (com filtro).",
+      mimeType: "application/json",
+    },
+    async (uri) => ({
+      contents: [{
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(
+          { destaque: openApiOperation("getEventosDestaque"), busca: openApiOperation("listarEventos") },
+          null,
+          2,
+        ),
+      }],
+    }),
+  );
+  server.registerTool(
+    "guedder_descobrir_eventos",
+    {
+      title: "Descobrir eventos",
+      description:
+        "Descobre eventos: sem nenhum filtro, traz os destaques da home (o que está em cartaz agora). " +
+        "Com cidade/estado/categoria/busca, procura no catálogo completo. " +
+        "Substitui guedder_listar_eventos e guedder_eventos_destaque. " +
+        "Schema detalhado: guedder://openapi/v3/tools/guedder_descobrir_eventos.",
+      inputSchema: {
+        cidade: z.string().optional().describe("Nome da cidade"),
+        estado: z.string().optional().describe("Sigla UF, ex: SP"),
+        categoria: z.string().optional().describe("Ver guedder_listar_categorias_evento"),
+        busca: z.string().optional().describe("Texto livre no nome do evento"),
+        max_results: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe("Máximo de eventos; ignorado sem filtro (destaques não paginam)"),
+      },
+      outputSchema: TOOL_OUTPUT_SCHEMA,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args: any) => {
+      try {
+        const temFiltro = Boolean(args?.cidade || args?.estado || args?.categoria || args?.busca);
+        const data = temFiltro
+          ? await apiGet("/api/v3/eventos", {
+              query: {
+                page: 1, // a API pagina a partir de 1, não de 0.
+                page_size: args?.max_results,
+                filtro: args?.busca,
+                nomeCidade: args?.cidade,
+                nomeEstado: args?.estado,
+                categoriaEventoEnum: args?.categoria,
+              },
+            })
+          : await apiGet("/api/v3/home/destaques");
+        return {
+          structuredContent: { result: data },
+          content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }], isError: true };
+      }
+    },
+  );
+
+  server.registerResource(
+    "guedder_detalhes_evento_schema",
+    "guedder://openapi/v3/tools/guedder_detalhes_evento",
+    {
+      title: "Schema: Detalhes do evento",
+      description: "Operações compostas: getEventoById + listarAtracoesPorEvento + listarLotesPublicos + getParametrosVenda.",
+      mimeType: "application/json",
+    },
+    async (uri) => ({
+      contents: [{
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(
+          {
+            evento: openApiOperation("getEventoById"),
+            atracoes: openApiOperation("listarAtracoesPorEvento"),
+            lotes: openApiOperation("listarLotesPublicos"),
+            parametrosVenda: openApiOperation("getParametrosVenda"),
+          },
+          null,
+          2,
+        ),
+      }],
+    }),
+  );
+  server.registerTool(
+    "guedder_detalhes_evento",
+    {
+      title: "Detalhes de um evento",
+      description:
+        "Dados de UM evento (id de guedder_descobrir_eventos). Sem `incluir`, só o básico: nome, data, local. " +
+        "Peça `incluir` para o que mais precisar: line-up, lotes com preço, formas de pagamento. " +
+        "Substitui guedder_get_evento, guedder_listar_atracoes_evento, guedder_listar_lotes_evento e " +
+        "guedder_get_parametros_venda. Ausência de parametrosVenda (null) = organizador ainda não " +
+        "configurou — \"ainda não divulgado\", não é erro nem significa evento inexistente. " +
+        "Schema detalhado: guedder://openapi/v3/tools/guedder_detalhes_evento.",
+      inputSchema: {
+        eventoId: z.string().describe("UUID ou código alfanumérico do evento"),
+        incluir: z
+          .array(z.enum(["atracoes", "lotes", "venda"]))
+          .optional()
+          .describe("O que buscar além do básico: line-up, lotes com preço, formas de pagamento"),
+      },
+      outputSchema: TOOL_OUTPUT_SCHEMA,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args: any) => {
+      try {
+        const eventoId = String(args?.eventoId ?? "");
+        const incluir = new Set<string>(args?.incluir ?? []);
+        const resultado: Record<string, unknown> = {
+          evento: await apiGet(`/api/v3/eventos/${enc(eventoId)}`),
+        };
+        if (incluir.has("atracoes")) resultado.atracoes = await apiGet(`/api/v3/eventos/${enc(eventoId)}/atracoes`);
+        if (incluir.has("lotes")) resultado.lotes = await apiGet(`/api/v3/eventos/${enc(eventoId)}/lotes`);
+        if (incluir.has("venda")) {
+          try {
+            resultado.parametrosVenda = await apiGet(`/api/v3/eventos/${enc(eventoId)}/parametros-venda`);
+          } catch (e: any) {
+            // 404 aqui é regra de negócio ("ainda não divulgado"), não falha da
+            // tool — só o 404 DESTE endpoint; o do evento acima propaga normal.
+            if (/-> 404\b/.test(String(e?.message))) resultado.parametrosVenda = null;
+            else throw e;
+          }
+        }
+        return {
+          structuredContent: { result: resultado },
+          content: [{ type: "text" as const, text: JSON.stringify(resultado, null, 2) }],
+        };
+      } catch (e: any) {
+        return { content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }], isError: true };
+      }
+    },
+  );
+
+  // guedder_status_da_compra — não existia como endpoint. /api/v3/compras
+  // (ResumoTicketsVO) não expõe NENHUM id de pedido; quem tem `idPedido` é o
+  // ingresso. "Status desta compra" só é respondível agregando os ingressos do
+  // mesmo idPedido — daí compor sobre /api/v3/ingressos, não sobre /compras.
+  if (!PUBLIC_ONLY) {
+    server.registerTool(
+      "guedder_status_da_compra",
+      {
+        title: "Status de uma compra",
+        description:
+          "Agrega os ingressos de UM pedido (identificador = idPedido, como aparece em " +
+          "guedder_meus_ingressos ou guedder_minhas_compras) e devolve evento, quantidade e o " +
+          "status de cada ingresso daquele pedido. Sem correspondência, devolve erro apontando " +
+          "para guedder_meus_ingressos.",
+        inputSchema: {
+          identificador: z.string().describe("idPedido de um dos ingressos"),
+        },
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      },
+      async (args: any) => {
+        try {
+          if (AUTH) {
+            if (!caller) throw new AuthError("Token ausente: esta tool age em nome de alguém.");
+            exigirEscopo(caller, "conta:read");
+          }
+          const identificador = String(args?.identificador ?? "");
+          const pagina: any = await apiGet("/api/v3/ingressos", { query: { size: 100, page: 0 }, auth: true, caller });
+          const doPedido = (pagina?.content ?? []).filter(
+            (i: any) => i?.idPedido === identificador || i?.compraId === identificador,
+          );
+          if (doPedido.length === 0) {
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Nenhum ingresso encontrado para "${identificador}". Use guedder_meus_ingressos para achar o idPedido correto.`,
+              }],
+              isError: true,
+            };
+          }
+          const resultado = {
+            idPedido: identificador,
+            nomeEvento: doPedido[0].nomeEvento,
+            dataInicioEvento: doPedido[0].dataInicioEvento,
+            quantidade: doPedido.length,
+            ingressos: doPedido.map((i: any) => ({ codigo: i.codigo, status: i.status, ativo: i.ativo })),
+          };
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(resultado, null, 2) }],
+          };
+        } catch (e: any) {
+          const motivo = e instanceof EscopoError ? `${e.message} (escopo \`conta:read\`)` : (e?.message ?? String(e));
+          return { content: [{ type: "text" as const, text: `Erro: ${motivo}` }], isError: true };
         }
       },
     );
