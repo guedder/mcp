@@ -11,11 +11,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
 import {
   AuthError,
+  EscopoError,
+  exigirEscopo,
   authConfigFromEnv,
   createVerifier,
   protectedResourceMetadata,
@@ -78,6 +81,60 @@ async function apiGet(
   }
   const ct = res.headers.get("content-type") ?? "";
   return ct.includes("application/json") ? res.json() : res.text();
+}
+
+/**
+ * Escrita na API, em nome do usuário.
+ *
+ * Deliberadamente NÃO é `apiRequest(metodo, ...)`: um helper genérico de verbo
+ * transformaria "este servidor escreve em dois lugares" em "este servidor pode
+ * escrever em qualquer lugar", e a diferença só apareceria numa auditoria.
+ * Enquanto houver uma escrita só, existe um helper só — e somar a segunda é uma
+ * decisão que alguém toma de olho aberto, não um parâmetro que já estava lá.
+ */
+async function apiPost(path: string, opts: { caller?: Caller } = {}): Promise<unknown> {
+  const res = await fetch(new URL(BASE + path), {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${await tokenProvider(opts.caller)}`,
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`POST ${path} -> ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 500)}` : ""}`);
+  }
+  const ct = res.headers.get("content-type") ?? "";
+  return ct.includes("application/json") ? res.json() : res.text();
+}
+
+/**
+ * Segredo de processo para os códigos de confirmação. Aleatório por instância, e
+ * isso basta: o código vive dentro de uma conversa, e a conversa não sobrevive a
+ * um restart de qualquer jeito.
+ *
+ * ponytail: segredo por processo, não por cluster. Com mais de uma réplica a
+ * confirmação pode cair noutra e a pessoa confirma de novo — atrito aceitável
+ * hoje. Se virar incômodo, o upgrade é uma chave em SSM lida no boot, não uma
+ * sessão em banco.
+ */
+const SEGREDO_DE_CONFIRMACAO = randomBytes(32);
+
+/**
+ * Código que amarra a confirmação a UM pedido e a UMA pessoa.
+ *
+ * Imprevisível de propósito. Se fosse fixo (um "CONFIRMAR" da vida), o modelo
+ * poderia mandá-lo de primeira e a fase de resumo nunca chegaria à pessoa — que
+ * é justamente a parte que faz o consent valer alguma coisa numa operação que
+ * devolve dinheiro.
+ */
+function codigoDeConfirmacao(pedidoId: string, caller?: Caller): string {
+  return createHmac("sha256", SEGREDO_DE_CONFIRMACAO)
+    .update(`${pedidoId}\n${caller?.usuarioId ?? caller?.email ?? "local"}`)
+    .digest("base64url")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase()
+    .slice(0, 10);
 }
 
 type Tool = {
@@ -452,6 +509,91 @@ function createMcpServer(caller?: Caller): McpServer {
     );
   }
 
+  // ── Escrita ────────────────────────────────────────────────────────────────
+  // Primeira tool que muda estado. Três portões em série, e cada um responde uma
+  // pergunta diferente:
+  //
+  //   escopo        — a pessoa autorizou o AGENTE a fazer isto por ela?
+  //   confirmação   — a pessoa mandou fazer ISTO, neste pedido, agora?
+  //   a própria API — a pessoa PODE fazer isto? (dono do pedido, prazo, check-in)
+  //
+  // O terceiro é o que já existia e continua sendo a autoridade: o MCP não
+  // reimplementa regra de cancelamento, e não deve. `validarCancelamentoDeCompra`
+  // na API é quem sabe de janela de 7 dias, 48h do evento e ingresso já bipado.
+  if (!PUBLIC_ONLY) {
+    server.registerTool(
+      "guedder_cancelar_pedido",
+      {
+        title: "Cancelar um pedido",
+        description:
+          "Cancela um pedido da pessoa logada e devolve o valor pelo mesmo meio de pagamento. " +
+          "Chame PRIMEIRO sem `confirmacao` para receber o resumo e o código; mostre esse resumo à pessoa, " +
+          "e só chame de novo com o código depois que ela confirmar. Nunca invente o código. " +
+          "O cancelamento é assíncrono: a API aceita o pedido e o estorno acontece em seguida no gateway.",
+        inputSchema: {
+          pedidoId: z.string().describe("Id do pedido a cancelar, como aparece em guedder_minhas_compras"),
+          confirmacao: z
+            .string()
+            .optional()
+            .describe("Código devolvido pela chamada anterior. Sem ele, nada é cancelado."),
+        },
+        // Sem `outputSchema` de propósito: esta tool devolve duas coisas
+        // diferentes — o resumo em português da fase 1 e a resposta da API na
+        // fase 2. Declarar o schema da segunda obrigaria a primeira a fingir ser
+        // um resultado de API que ela não é.
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          // Cancelar duas vezes não é o mesmo que cancelar uma: a segunda tende a
+          // bater num pedido que já não está PAGO e voltar erro.
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+      },
+      async (args: any) => {
+        const pedidoId = String(args?.pedidoId ?? "");
+        try {
+          // `caller?` e não `caller!`: com Cognito ligado e transporte stdio o
+          // servidor sobe sem caller, e o `!` derefava undefined, devolvendo um
+          // TypeError no lugar do erro de autenticação. Fechava do lado certo,
+          // mas com a mensagem errada.
+          if (AUTH) {
+            if (!caller) throw new AuthError("Token ausente: esta tool age em nome de alguém.");
+            exigirEscopo(caller, "pedido:cancelar");
+          }
+
+          const esperado = codigoDeConfirmacao(pedidoId, caller);
+          if (args?.confirmacao !== esperado) {
+            const texto =
+              args?.confirmacao
+                ? `Confirmação inválida para o pedido ${pedidoId}. ` +
+                  `Um código vale para um pedido só, e não se reaproveita. ` +
+                  `Chame esta tool sem \`confirmacao\` para obter o código deste pedido.`
+                : `Vou cancelar o pedido ${pedidoId}. O valor volta pelo mesmo meio de pagamento, ` +
+                  `e a operação não tem desfazer: reservar de novo depende de ainda haver lote disponível.\n\n` +
+                  `Mostre isto à pessoa e, se ela confirmar, chame de novo com confirmacao="${esperado}".`;
+            return {
+              content: [{ type: "text" as const, text: texto }],
+              ...(args?.confirmacao ? { isError: true as const } : {}),
+            };
+          }
+
+          const data = await apiPost(`/api/v3/pedidos/${enc(pedidoId)}/cancelamento`, { caller });
+          return {
+            structuredContent: { result: data },
+            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+          };
+        } catch (e: any) {
+          const motivo =
+            e instanceof EscopoError
+              ? `${e.message} (escopo \`pedido:cancelar\`)`
+              : (e?.message ?? String(e));
+          return { content: [{ type: "text" as const, text: `Erro: ${motivo}` }], isError: true };
+        }
+      },
+    );
+  }
+
   // Auditoria: única tool que não age como o usuário — ela usa a credencial AWS da task.
   // Por isso o portão é aqui e não na API: a API não está no caminho (ADR 0001 §9.7).
   if (auditoria && !PUBLIC_ONLY) {
@@ -601,12 +743,35 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
   // cliente que não lê o documento.
   if (AUTH && pathname === "/authorize") {
     try {
+      const pedido = new URL(req.url ?? "/", base).searchParams;
+
+      // A tela de consent vive aqui porque o Cognito não tem uma: se o escopo
+      // está no app client e o cliente pede, ele emite sem perguntar nada à
+      // pessoa (`prompt=consent` só é repassado a IdP externo). Como já somos o
+      // front door do /authorize, é aqui que a pessoa escolhe.
+      if (!consentiuDeVerdade(pedido)) {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(telaDeConsent(pedido, escoposConcediveis(AUTH), AUTH.resource));
+        return;
+      }
+
       const { authorize } = await cognitoEndpoints(AUTH);
       const destino = new URL(authorize);
-      // Repassa a query INTEIRA sem interpretar: PKCE, state e scope são do
-      // cliente e do Cognito. Reconstruir só criaria oportunidade de perder um
-      // parâmetro que ainda não existe.
-      new URL(req.url ?? "/", base).searchParams.forEach((v, k) => destino.searchParams.set(k, v));
+      pedido.forEach((v, k) => destino.searchParams.set(k, v));
+      destino.searchParams.delete("consentido");
+
+      // Interseção com o que ESTE servidor anuncia. Sem ela a tela é decorativa:
+      // bastaria montar a query à mão com o escopo que se quisesse. Escopo que o
+      // Cognito não conhece ainda seria ignorado por ele, mas escopo que ele
+      // conhece e nós não anunciamos passaria direto.
+      const pedidos = new Set(pedido.getAll("scope").flatMap((s) => s.split(/\s+/)).filter(Boolean));
+      const concedidos = escoposConcediveis(AUTH).filter((s) => pedidos.has(s));
+      destino.searchParams.set("scope", concedidos.join(" "));
+
+      // RFC 8707: sem isto o access token sai sem `aud` e a amarração de
+      // superfície volta a depender só do client_id.
+      destino.searchParams.set("resource", AUTH.resource);
+
       res.writeHead(302, { location: destino.toString() });
       res.end();
     } catch (e: any) {
@@ -770,6 +935,182 @@ if (MCP_TRANSPORT === "stdio") {
  * está depurando.
  */
 const REDIGIR = new Set(["code", "code_verifier", "client_secret", "refresh_token"]);
+
+/**
+ * Escopos de identidade. Não entram na tela porque não são permissão: são o
+ * mínimo para o Cognito dizer QUEM é a pessoa. Desmarcá-los não daria uma
+ * conexão mais restrita, daria uma conexão que não funciona.
+ */
+const ESCOPOS_DE_IDENTIDADE = new Set(["openid", "email", "profile", "phone"]);
+
+/**
+ * O que este servidor aceita conceder, com `openid` garantido.
+ *
+ * `GUEDDER_MCP_SCOPES` precisa espelhar o `allowed_oauth_scopes` do Terraform, e
+ * listar ali só os escopos customizados é um erro plausível. Sem `openid` o
+ * authorize sai sem escopo de identidade, então não vem id_token nem a claim
+ * `email`, e o verifier recusa todo token com "Token sem email". Falha que só
+ * aparece no login real, nunca em teste.
+ *
+ * Um lugar só, porque o formulário e a interseção precisam concordar: garantir
+ * `openid` no HTML e deixá-lo cair na interseção não consertaria nada.
+ */
+function escoposConcediveis(cfg: { scopes?: string[] }): string[] {
+  const lista = cfg.scopes ?? [];
+  return lista.includes("openid") ? lista : ["openid", ...lista];
+}
+
+/**
+ * O que cada escopo autoriza, na língua de quem vai decidir. Escopo sem texto
+ * aqui aparece pelo nome cru — feio, e de propósito: é o lembrete de que escopo
+ * novo sem explicação é permissão que a pessoa concede sem entender.
+ */
+const TEXTO_DO_ESCOPO: Record<string, string> = {
+  "conta:read": "Ver seus ingressos, suas compras e seus dados de perfil",
+  "pedido:cancelar":
+    "Cancelar pedidos seus, o que devolve o valor pelo mesmo meio de pagamento. O agente vai pedir sua confirmação antes de cada cancelamento",
+};
+
+/**
+ * Prova de que a tela de consent foi renderizada para ESTE pedido de autorização.
+ *
+ * A primeira versão usava um literal (`consentido=1`), e quem monta a URL do
+ * /authorize é o cliente MCP: bastava acrescentar o parâmetro para o servidor
+ * conceder sem nunca mostrar a tela, e a pessoa via só o login do Cognito, que
+ * não exibe escopo nenhum. O parâmetro precisa ser algo que o cliente não
+ * consiga escrever sozinho.
+ *
+ * Amarrada ao pedido (client_id, redirect_uri, state, code_challenge), para não
+ * virar passe reutilizável em outro redirect_uri. A janela de tempo vem em
+ * blocos de 10 minutos, e aceitamos o bloco atual e o anterior: a pessoa está
+ * lendo a tela nesse meio tempo, e expirar no meio da leitura seria pior que o
+ * risco de uma prova velha.
+ *
+ * ponytail: HMAC sem estado, não nonce em banco. Um nonce de uso único não
+ * compraria o que parece comprar, porque a tela é pública e o cliente pode
+ * buscá-la para obter um nonce fresco. Isto eleva a barra de "somar um
+ * parâmetro" para "buscar a tela e repetir a prova", e fecha o caso do cliente
+ * que pula a tela por descuido. Fechar o caso do cliente deliberado é o mesmo
+ * passo já registrado no `telaDeConsent`: client confidencial e sessão emitida
+ * aqui.
+ */
+function provaDeConsent(pedido: URLSearchParams, deslocamento = 0): string {
+  const bloco = Math.floor(Date.now() / 600_000) - deslocamento;
+  return createHmac("sha256", SEGREDO_DE_CONFIRMACAO)
+    .update(
+      [
+        pedido.get("client_id") ?? "",
+        pedido.get("redirect_uri") ?? "",
+        pedido.get("state") ?? "",
+        pedido.get("code_challenge") ?? "",
+        bloco,
+      ].join("\n"),
+    )
+    .digest("base64url");
+}
+
+function consentiuDeVerdade(pedido: URLSearchParams): boolean {
+  const veio = pedido.get("consentido");
+  if (!veio) return false;
+  // Sem short-circuit por igualdade de string em cima de segredo: compara as
+  // duas janelas sempre, e o custo é irrelevante num caminho de navegador.
+  return [0, 1].some((d) => {
+    const esperado = provaDeConsent(pedido, d);
+    return veio.length === esperado.length && timingSafeEqual(Buffer.from(veio), Buffer.from(esperado));
+  });
+}
+
+function escaparHtml(valor: string): string {
+  return valor.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+  );
+}
+
+/**
+ * Tela de consent.
+ *
+ * TETO CONHECIDO, registrado para quem vier depois: isto é camada de
+ * autorização, não barreira criptográfica. O app client do agente é público
+ * (PKCE, sem secret), então um cliente malicioso que já tenha o client_id pode
+ * ir direto ao /authorize do Cognito e pular esta tela. O que limita o estrago
+ * continua sendo a lista de `callback_urls` do app client e os escopos que ele
+ * permite.
+ *
+ * Fechar isso de verdade exige tornar o app client confidencial, com o secret
+ * só neste servidor, e o MCP passar a emitir a sessão (o molde é o
+ * `CheckinSessionTokenService`). É o passo seguinte quando aparecer um cliente
+ * de terceiro de fato não confiável, e não vale o custo enquanto o cliente é o
+ * plugin da própria Guedder.
+ */
+function telaDeConsent(pedido: URLSearchParams, anunciados: string[], resource: string): string {
+  // O valor do checkbox é o nome COMPLETO (é o que o Cognito entende no
+  // /authorize); o texto é o nome curto, que é o que a pessoa consegue ler.
+  const curto = (s: string) =>
+    s.startsWith(`${resource.replace(/\/+$/, "")}/`)
+      ? s.slice(resource.replace(/\/+$/, "").length + 1)
+      : s;
+  const opcionais = anunciados.filter((s) => !ESCOPOS_DE_IDENTIDADE.has(s));
+  const pedidos = new Set(
+    pedido.getAll("scope").flatMap((s) => s.split(/\s+/)).filter(Boolean),
+  );
+
+  // Todo parâmetro do pedido original atravessa a tela como hidden: PKCE, state
+  // e redirect_uri são do cliente, e perder qualquer um quebra o retorno.
+  const ocultos = [...pedido.entries()]
+    .filter(([k]) => k !== "scope" && k !== "consentido")
+    .map(([k, v]) => `<input type="hidden" name="${escaparHtml(k)}" value="${escaparHtml(v)}">`)
+    .join("\n      ");
+
+  const identidade = anunciados
+    .filter((s) => ESCOPOS_DE_IDENTIDADE.has(s))
+    .map((s) => `<input type="hidden" name="scope" value="${escaparHtml(s)}">`)
+    .join("\n      ");
+
+  const itens = opcionais
+    .map((escopo) => {
+      const nome = curto(escopo);
+      const marcado = pedidos.has(escopo) || pedidos.has(nome);
+      return `<label class="item">
+        <input type="checkbox" name="scope" value="${escaparHtml(escopo)}"${marcado ? " checked" : ""}>
+        <span><strong>${escaparHtml(TEXTO_DO_ESCOPO[nome] ?? nome)}</strong>
+        <code>${escaparHtml(nome)}</code></span>
+      </label>`;
+    })
+    .join("\n      ");
+
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conectar agente à sua conta Guedder</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.3rem; }
+  .item { display: flex; gap: .75rem; align-items: flex-start; padding: .9rem;
+          border: 1px solid currentColor; border-radius: .5rem; margin-bottom: .6rem; }
+  .item code { display: block; opacity: .6; font-size: .8rem; }
+  button { font: inherit; padding: .7rem 1.4rem; border-radius: .5rem; cursor: pointer; }
+  .aviso { opacity: .75; font-size: .9rem; }
+</style>
+</head>
+<body>
+  <h1>Conectar o agente à sua conta Guedder</h1>
+  <p class="aviso">O agente vai agir <strong>em seu nome</strong>, com as permissões que você marcar.
+  Você escolhe agora e pode reconectar com outras permissões depois.</p>
+  <form method="GET" action="/authorize">
+      ${ocultos}
+      ${identidade}
+      <input type="hidden" name="consentido" value="${escaparHtml(provaDeConsent(pedido))}">
+      ${itens}
+    <button type="submit">Continuar para o login</button>
+  </form>
+  <p class="aviso">Na próxima tela você entra com sua conta Guedder. Nada é autorizado antes disso.</p>
+</body>
+</html>`;
+}
 
 function detalheOauth(pathname: string, req: IncomingMessage): string {
   if (!["/authorize", "/token", "/register"].includes(pathname)) return "";

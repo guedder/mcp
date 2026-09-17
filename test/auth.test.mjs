@@ -9,6 +9,8 @@ import { SignJWT, exportJWK, generateKeyPair, createLocalJWKSet } from "jose";
 import {
   createVerifier,
   AuthError,
+  EscopoError,
+  exigirEscopo,
   protectedResourceMetadata,
   authorizationServerMetadata,
   cognitoEndpoints,
@@ -204,4 +206,145 @@ test("falta de endpoint no documento falha alto", async () => {
     /não publicou authorization_endpoint/,
   );
   limparCacheDeEndpoints();
+});
+
+// ── Escopos concedidos (GUE — consent do MCP) ────────────────────────────────
+// O que muda aqui: até agora o token dizia QUEM é a pessoa, e o alcance vinha do
+// papel dela (`isAdmin`). Com consent, o token passa a dizer também O QUE ela
+// autorizou o agente a fazer em nome dela — e essas duas coisas não são a mesma.
+// Mirror do check-in: escopo é congelado na emissão do token, não reconsultado.
+
+// Formato do fio: o Cognito prefixa cada escopo com o identificador do resource
+// server. Escrever o teste com o nome curto seria testar um token que nunca
+// existe — foi exatamente o erro que `prefixo do resource server` pegou.
+const P = "https://mcp.guedder.com/mcp";
+
+test("escopos concedidos saem da claim `scope`", async () => {
+  const { verify, emitir } = await ambiente();
+  const caller = await verify(
+    `Bearer ${await emitir({ scope: `openid ${P}/conta:read ${P}/pedido:cancelar` })}`,
+  );
+
+  assert.deepEqual(caller.scopes, ["conta:read", "pedido:cancelar"]);
+});
+
+test("token sem `scope` não concede nada", async () => {
+  const { verify, emitir } = await ambiente();
+  const caller = await verify(`Bearer ${await emitir({})}`);
+
+  // Ausência é o conjunto vazio, nunca "tudo". Um token velho, emitido antes do
+  // consent existir, não pode virar passe livre quando o gate entrar.
+  assert.deepEqual(caller.scopes, []);
+});
+
+test("exigirEscopo barra o que não foi concedido", async () => {
+  const { verify, emitir } = await ambiente();
+  const caller = await verify(`Bearer ${await emitir({ scope: `${P}/conta:read` })}`);
+
+  exigirEscopo(caller, "conta:read"); // não lança
+
+  assert.throws(
+    () => exigirEscopo(caller, "pedido:cancelar"),
+    (e) => e instanceof EscopoError && /pedido:cancelar/.test(e.message),
+  );
+});
+
+// A propriedade que faz o consent significar alguma coisa. Sem este teste, a
+// primeira pessoa a escrever `if (isAdmin) return true` num gate de escopo
+// transforma consent em decoração: o agente de um admin poderia cancelar
+// ingresso que o admin nunca autorizou o agente a cancelar.
+test("admin NÃO fura escopo — papel diz onde pode, consent diz o que autorizou", async () => {
+  const { verify, emitir } = await ambiente();
+  const caller = await verify(
+    `Bearer ${await emitir({ "custom:role": "ADMIN", scope: `${P}/conta:read` })}`,
+  );
+
+  assert.equal(caller.isAdmin, true);
+  assert.throws(() => exigirEscopo(caller, "pedido:cancelar"), EscopoError);
+});
+
+// RFC 8707: o Cognito só põe `aud` no access token quando o cliente pede
+// resource binding. Quando vier, é a amarração forte de superfície e vale mais
+// que o client_id; quando não vier, o client_id segue sendo o que temos.
+test("audiência errada é recusada quando o token traz `aud`", async () => {
+  const { verify, emitir } = await ambiente();
+  const token = await emitir({ aud: "https://api.guedder.com" });
+
+  await assert.rejects(
+    () => verify(`Bearer ${token}`),
+    (e) => e instanceof AuthError && /audi/i.test(e.message),
+  );
+});
+
+test("audiência certa passa, e token sem `aud` continua valendo pelo client_id", async () => {
+  const { verify, emitir } = await ambiente();
+
+  const comAud = await verify(`Bearer ${await emitir({ aud: "https://mcp.guedder.com/mcp" })}`);
+  assert.equal(comAud.email, "suporte@guedder.com");
+
+  const semAud = await verify(`Bearer ${await emitir({})}`);
+  assert.equal(semAud.email, "suporte@guedder.com");
+});
+
+// No Cognito o identificador do resource server vira PREFIXO do escopo dentro do
+// token: quem declara `conta:read` em `https://mcp.guedder.com/mcp` recebe
+// `https://mcp.guedder.com/mcp/conta:read`. O n8n já vive isso com o resource
+// server da API. Se o prefixo vazasse para o código das tools, cada gate viraria
+// uma URL literal e trocar o host do MCP quebraria autorização.
+test("prefixo do resource server é removido do escopo", async () => {
+  const { verify, emitir } = await ambiente();
+  const caller = await verify(
+    `Bearer ${await emitir({
+      scope: "openid https://mcp.guedder.com/mcp/conta:read https://mcp.guedder.com/mcp/pedido:cancelar",
+    })}`,
+  );
+
+  assert.ok(caller.scopes.includes("conta:read"), `veio ${JSON.stringify(caller.scopes)}`);
+  assert.ok(caller.scopes.includes("pedido:cancelar"));
+  exigirEscopo(caller, "pedido:cancelar"); // o gate usa o nome curto
+
+  // Escopo de OUTRO resource server não pode virar permissão nossa só por ter o
+  // mesmo sufixo — senão `https://api.guedder.com/pedido:cancelar` abriria a
+  // tool de cancelamento do MCP.
+  const outro = await verify(
+    `Bearer ${await emitir({ scope: "https://api.guedder.com/pedido:cancelar" })}`,
+  );
+  assert.deepEqual(outro.scopes, []);
+});
+
+// A audiência é um identificador FIXO (`https://mcp.guedder.com/mcp`, igual em
+// staging e produção, porque é endereço e não ambiente). A URL pública onde o
+// servidor de fato responde é outra coisa, e em staging é outro host.
+//
+// Derivar uma da outra fazia o discovery anunciar endpoints num host que não
+// resolve: cliente MCP lê a metadata, segue para `https://mcp.guedder.com/authorize`
+// e não acha ninguém. Quebra silenciosa, porque o servidor sobe e o health check passa.
+test("URL pública é independente da audiência", async () => {
+  const doCognito = {
+    issuer: ISSUER,
+    authorization_endpoint: "https://exemplo.amazoncognito.com/oauth2/authorize",
+    token_endpoint: "https://exemplo.amazoncognito.com/oauth2/token",
+    jwks_uri: `${ISSUER}/.well-known/jwks.json`,
+  };
+  const cfg = {
+    issuer: ISSUER,
+    resource: "https://mcp.guedder.com/mcp",
+    publicUrl: "https://mcp.dev.services.guedder.com",
+  };
+
+  const doc = await authorizationServerMetadata(cfg, async () => ({ ok: true, json: async () => doCognito }));
+
+  assert.equal(doc.issuer, "https://mcp.dev.services.guedder.com");
+  assert.equal(doc.authorization_endpoint, "https://mcp.dev.services.guedder.com/authorize");
+  assert.equal(doc.token_endpoint, "https://mcp.dev.services.guedder.com/token");
+
+  const rec = protectedResourceMetadata(cfg);
+  // O `resource` NÃO acompanha o host: ele é a audiência que o token carrega.
+  assert.equal(rec.resource, "https://mcp.guedder.com/mcp");
+  assert.deepEqual(rec.authorization_servers, ["https://mcp.dev.services.guedder.com"]);
+});
+
+test("sem publicUrl, cai na origem da audiência (comportamento de hoje)", () => {
+  const rec = protectedResourceMetadata({ issuer: ISSUER, resource: "https://mcp.guedder.com/mcp" });
+  assert.deepEqual(rec.authorization_servers, ["https://mcp.guedder.com"]);
 });
