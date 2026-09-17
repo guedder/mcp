@@ -133,6 +133,14 @@ test("o handshake initialize traz instructions com o fluxo de uso", async () => 
     assert.match(instructions, /guedder_get_parametros_venda/);
     assert.match(instructions, /404/);
     assert.match(instructions, /guedder:\/\/openapi\/v3/);
+
+    // O handshake afirmava "Só GETs — nunca muta nada", e isso deixou de ser
+    // verdade quando a tool de cancelamento entrou. Um servidor que se declara
+    // read-only enquanto tem tool destrutiva engana o cliente na única coisa
+    // que ele lê antes de decidir como tratar as chamadas.
+    assert.doesNotMatch(instructions, /nunca muta|s[óo] GETs/i, "não pode se declarar read-only");
+    assert.match(instructions, /guedder_cancelar_pedido/, "a tool de escrita tem que aparecer");
+    assert.match(instructions, /confirmac|confirmaç/i, "e o fluxo de duas fases tem que estar explicado");
   } finally {
     process.kill();
     await new Promise((resolve) => process.once("exit", resolve));

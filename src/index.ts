@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * @guedder/mcp — readonly MCP over Guedder API v3 (operational tasks).
+ * @guedder/mcp — MCP over Guedder API v3 (operational tasks).
  *
  * Auth: a caller-provided Bearer token (`GUEDDER_BEARER_TOKEN`) is forwarded only
  * to authenticated endpoints. OAuth2 can later replace tokenProvider() without
  * changing the tools or the HTTP client.
  *
- * 17 thin readonly wrappers, one generic GET client and a bearer token provider.
+ * Wrappers finos sobre a v3: leitura via `apiGet`, e uma única escrita
+ * (`guedder_cancelar_pedido`) via `apiPost`, atrás de escopo e confirmação em
+ * duas fases. Não existe helper genérico de verbo, e isso é deliberado.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -435,7 +437,7 @@ const TOOLS: Tool[] = [
   },
 ];
 
-const INSTRUCTIONS = `MCP readonly sobre a API Guedder v3 (plataforma de venda de ingressos). Só GETs — nunca muta nada.
+const INSTRUCTIONS = `MCP sobre a API Guedder v3 (plataforma de venda de ingressos). Quase tudo é leitura; há UMA operação que muda estado, descrita no fim.
 
 Fluxo para responder sobre um evento, sempre nesta ordem:
 1. Ache o evento e o id: guedder_listar_eventos (busca por nome/cidade/categoria) ou guedder_eventos_destaque (o que está em cartaz). O id é UUID ou código alfanumérico.
@@ -449,7 +451,15 @@ Fluxo para responder sobre um evento, sempre nesta ordem:
 Regras:
 - Nunca invente id, data, preço ou regra. Se uma tool não devolver, diga que não tem a informação.
 - Toda tool devolve o JSON cru em content e em structuredContent.result. O schema de saída detalhado de cada tool está no resource guedder://openapi/v3/tools/<nome_da_tool>; o índice compacto de todas as operações está em guedder://openapi/v3.
-- Com GUEDDER_MCP_PUBLIC_ONLY=1 (agentes de comprador) só as 7 tools públicas de evento acima ficam disponíveis. As demais (ingressos, compras, auditoria, administrativo) exigem um token Guedder e perfil compatível.`;
+- Com GUEDDER_MCP_PUBLIC_ONLY=1 (agentes de comprador) só as 7 tools públicas de evento acima ficam disponíveis. As demais (ingressos, compras, auditoria, administrativo) exigem um token Guedder e perfil compatível.
+
+Escrita — guedder_cancelar_pedido:
+É a única tool que muda estado. Cancela um pedido da pessoa logada e devolve o valor pelo mesmo meio de pagamento; não tem desfazer.
+1. Chame SEM \`confirmacao\`. Nada é cancelado, e você recebe um resumo do efeito mais um código.
+2. Mostre esse resumo à pessoa e espere ela confirmar, com todas as letras.
+3. Só então chame de novo, passando aquele código em \`confirmacao\`.
+Nunca invente o código nem pule a etapa 2: o código existe justamente para garantir que a pessoa viu o que ia acontecer. Um código vale para um pedido só.
+A tool exige que a pessoa tenha concedido o escopo \`pedido:cancelar\` ao conectar. Se não concedeu, o erro diz isso, e o caminho é ela reconectar autorizando — não há como contornar por aqui.`;
 
 function createMcpServer(caller?: Caller): McpServer {
   const server = new McpServer({ name: "guedder-ops", version: "0.1.0" }, { instructions: INSTRUCTIONS });
