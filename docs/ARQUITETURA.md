@@ -676,8 +676,9 @@ seguinte.
   pode cair noutra.
 - **Client confidencial e sessão emitida aqui.** É o que fecha os dois tetos da
   tela de consent; gatilho é cliente de terceiro de fato não confiável.
-- **Escopos vs tools.** Só `pedido:cancelar` é exigido hoje; `conta:read`
-  existe no resource server e **não** é exigido por nenhuma tool de leitura.
-  Quando passar a ser, é mudança de autorização para quem já conectou.
-- **Redesenho das tools de leitura por tarefa do comprador** (ADR 0004), ainda
-  não mergeado.
+- **Escopos vs tools de staff/admin.** `conta:read` e `pedido:cancelar` são
+  exigidos nas tools do comprador desde a ADR 0004. As tools de staff/admin
+  (`buscar_ingressos_evento`, `get_lote`, o bloco financeiro) continuam sem
+  escopo próprio — fora daquele corte por não serem a persona dele.
+- **Redesenho das tools de leitura por tarefa do comprador** (ADR 0004) —
+  implementado, [PR guedder/mcp#18](https://github.com/guedder/mcp/pull/18).

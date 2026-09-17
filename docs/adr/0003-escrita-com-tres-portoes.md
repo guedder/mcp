@@ -90,9 +90,10 @@ devolve dinheiro anunciada como read-only é mentira com efeito colateral.
   Cognito **e** em `GUEDDER_MCP_SCOPES`, frase no dicionário da tela de
   consent, nome na lista de exceções do `spec-paths`, e annotations honestas.
   Nenhum desses passos é acidental.
-- Escopos de leitura ainda **não** são exigidos: `conta:read` existe no
-  resource server e nenhuma tool o pede. Passar a exigi-lo é mudança de
-  autorização para quem já conectou.
+- Escopos de leitura ficaram sem exigência por um tempo depois de existirem no
+  resource server (`conta:read`) — corrigido na ADR 0004, no mesmo PR que
+  consolidou as tools do comprador. Ver lá o porquê de ter ficado destravado
+  até então e o que foi ligado.
 - O segredo dos HMACs é por processo. Com mais de uma réplica, a confirmação
   pode cair noutra e a pessoa confirma de novo. O upgrade, se incomodar, é uma
   chave em SSM lida no boot, não sessão em banco.
