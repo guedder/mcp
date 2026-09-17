@@ -62,7 +62,8 @@ da task; o portão de admin é no servidor (`isAdmin`), não na API.
 |---|---|
 | `GUEDDER_COGNITO_ISSUER` | issuer do pool. Vazio = auth desligada. |
 | `GUEDDER_MCP_CLIENT_ID` | `client_id` do app client do agente. Token de outro client é recusado. |
-| `GUEDDER_MCP_RESOURCE` | audiência declarada na metadata RFC 9728 (default `https://mcp.guedder.com/mcp`). |
+| `GUEDDER_MCP_RESOURCE` | **audiência**: identificador do resource server, prefixo dos escopos, conferido no `aud`. Mesmo valor em staging e produção (default `https://mcp.guedder.com/mcp`). |
+| `GUEDDER_MCP_PUBLIC_URL` | **onde o servidor responde de verdade** (em staging, `https://mcp.dev.services.guedder.com`). Só a metadata usa. Sem ela, o discovery anuncia endpoints no host da audiência, que não resolve — e a falha é silenciosa: o serviço sobe e o health check passa. |
 | `GUEDDER_MCP_SCOPES` | escopos que o app client permite, nomes COMPLETOS (com prefixo do resource server). Default `openid email profile`. |
 | `GUEDDER_BEARER_TOKEN` | fallback estático, só sem Cognito. |
 
@@ -75,6 +76,17 @@ da task; o portão de admin é no servidor (`isAdmin`), não na API.
 - `isAdmin` sempre false com token de admin → conferir se a Pre-Token Lambda está
   populando `custom:role` (sem Postgres alcançável, nenhum `custom:*` sai).
 
+- Primeira chamada depois de uma hora parada falhando com erro do **ALB** (não do
+  MCP) → o serviço de staging dorme por inatividade e não acorda sozinho. Abra o
+  front antes; ver `docs/adr/0005-hospedagem-em-staging.md`.
+
 Staging: pool `us-east-1_UhlIAqn5b`, hosted UI
-`guedder-auth-staging.auth.us-east-1.amazoncognito.com`. Fonte da verdade do app
-client: `guedder/identity/staging/cognito.tf`.
+`guedder-auth-staging.auth.us-east-1.amazoncognito.com`, servidor em
+`https://mcp.dev.services.guedder.com/mcp`. Fonte da verdade do app client:
+`guedder/identity/staging/cognito.tf`.
+
+## Onde está o resto
+
+O desenho completo (fluxo OAuth ponta a ponta, o que o documento do Cognito
+declara errado, `/register` mascarado, tela de consent, prova HMAC) está em
+`docs/ARQUITETURA.md` §5 a §7, e os porquês nos ADRs 0001 e 0002 deste repo.

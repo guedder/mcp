@@ -1,8 +1,19 @@
 # @guedder/mcp
 
-Readonly MCP over the **Guedder API v3** for operational tasks. Thin wrappers over
-the public + produtor/admin GET endpoints. Streamable HTTP stateless server,
-TypeScript.
+MCP over the **Guedder API v3**. Thin wrappers over the public + produtor/admin
+GET endpoints, mais **uma** operação de escrita (`guedder_cancelar_pedido`).
+Streamable HTTP stateless server, TypeScript.
+
+## Documentação
+
+- **[`docs/ARQUITETURA.md`](docs/ARQUITETURA.md)** — arquitetura completa e guia
+  de reimplementação: ciclo de request, fluxo OAuth, identidade e escopos,
+  camada de tools, auditoria, testes, infra e ordem sugerida para reconstruir
+  do zero. É o documento a ler antes de mexer em qualquer coisa estrutural.
+- **[`docs/adr/`](docs/adr/)** — as decisões deste repo, com o porquê e as
+  alternativas descartadas.
+- Contexto maior (delegação de identidade, consent, admin): ADR 0001 §9 do repo
+  `auth`.
 
 ## Transporte
 
@@ -158,6 +169,7 @@ cada uma).
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
 | `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/perfil` |
 | `guedder_cancelar_pedido` | ✅ `pedido:cancelar` | `POST /api/v3/pedidos/{pedidoId}/cancelamento` |
+| `guedder_rastrear_compra` | ✅ ADMIN | não fala com a API: CloudWatch Logs Insights com a credencial da task. Só é registrada com `GUEDDER_MCP_LOG_GROUPS` definido |
 
 Escopo `conta:read` existia no resource server e na tela de consent desde a v2
 (ver seção de auth abaixo) mas **nenhuma tool o exigia** — a pessoa concedia e a

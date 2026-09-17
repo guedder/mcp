@@ -29,7 +29,11 @@ description: Fluxo das tools públicas do MCP Guedder para responder sobre um ev
   O schema de saída de cada uma está no resource `guedder://openapi/v3/tools/<nome>`,
   que lista TODAS as operações que ela pode acionar, não uma só.
 - Este servidor não é só-leitura: existe `guedder_cancelar_pedido`, fora do escopo desta
-  skill (ver `guedder-mcp-auth-cognito` e o README para o fluxo de escrita).
+  skill e nunca o passo seguinte de uma consulta de evento (ver
+  `docs/adr/0003-escrita-com-tres-portoes.md` e `guedder-mcp-auth-cognito` para o fluxo
+  de escrita).
+- Com `GUEDDER_MCP_PUBLIC_ONLY=1` só `guedder_descobrir_eventos`,
+  `guedder_detalhes_evento` e `guedder_listar_categorias_evento` existem no handshake.
 
 ## Exemplo
 
