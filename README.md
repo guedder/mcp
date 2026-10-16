@@ -1,7 +1,8 @@
 # @guedder/mcp
 
-MCP over the **Guedder API v3**. Thin wrappers over the public + produtor/admin
-GET endpoints, mais **uma** operação de escrita (`guedder_cancelar_pedido`).
+MCP over the **Guedder API**. Thin wrappers over the public + produtor/admin
+GET endpoints, mais **três** operações de escrita (`guedder_cancelar_pedido`,
+`guedder_criar_lote`, `guedder_criar_cupom`), todas com confirmação em duas fases.
 Streamable HTTP stateless server, TypeScript.
 
 ## Documentação
@@ -168,7 +169,11 @@ cada uma).
 | `guedder_listar_resumo_repasses_eventos` | ✅ ADMIN | `GET /api/v3/administrativo/repasses/eventos` (MCP: `max_results`, sempre página 0) |
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
 | `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/perfil` |
+| `guedder_ingressos_vendidos_periodo` | ✅ `vendas:read` | Pagina `GET /api/v1/metrica/{eventoId}/ultimas-vendas` (`sort=viewId.dataCompra,desc`) e soma por dia, até 31 dias em America/Sao_Paulo; dia sem linha = 0 |
+| `guedder_lotes_esgotados` | ✅ `vendas:read` | Pagina `GET /api/v1/lote/{eventoId}`; esgotado = `enabled && estoqueInicial - ingressosVendidos <= 0` (não `estoqueDisponivel`, que vem 0 em lote inativo) |
 | `guedder_cancelar_pedido` | ✅ `pedido:cancelar` | `POST /api/v3/pedidos/{pedidoId}/cancelamento` |
+| `guedder_criar_lote` | ✅ `lote:write` | `POST /api/v1/lote/{eventoId}/adicionar` (duas fases) |
+| `guedder_criar_cupom` | ✅ `cupom:write` | `POST /api/v1/cupom/{eventoId}` (duas fases); nomes de lote resolvidos por `GET /api/v1/lote/{eventoId}` |
 | `guedder_rastrear_compra` | ✅ ADMIN | não fala com a API: CloudWatch Logs Insights com a credencial da task. Só é registrada com `GUEDDER_MCP_LOG_GROUPS` definido |
 
 Escopo `conta:read` existia no resource server e na tela de consent desde a v2
@@ -178,9 +183,9 @@ concessão não valia nada. Corrigido ao consolidar: `meus_ingressos`,
 de staff/admin (buscar_ingressos_evento, get_lote, financeiro) ainda não têm
 escopo próprio — ficam de fora deste corte por não serem persona Comprador.
 
-### A tool de escrita
+### As tools de escrita
 
-`guedder_cancelar_pedido` é a primeira tool que muda estado, e quebra de propósito
+`guedder_cancelar_pedido` foi a primeira tool que mudou estado, e quebrou de propósito
 a garantia estrutural de só-leitura que existia antes (ADR 0001 §9.4 do repo
 `auth`). Três portões em série, cada um respondendo uma coisa:
 
@@ -192,9 +197,17 @@ a garantia estrutural de só-leitura que existia antes (ADR 0001 §9.4 do repo
 
 A confirmação é em duas fases porque o agente é um LLM: a primeira chamada não
 escreve nada, devolve o resumo em português e um código; a segunda só executa
-com aquele código. O código é um HMAC do pedido mais a pessoa, imprevisível de
-propósito — se fosse fixo, o modelo poderia pular a fase de resumo e a pessoa
-nunca veria o que estava sendo cancelado.
+com aquele código. O código é um HMAC da operação, do alvo, dos **argumentos**
+e da pessoa, em blocos de 10 minutos, imprevisível de propósito — se fosse fixo,
+o modelo poderia pular a fase de resumo e a pessoa nunca veria o que estava sendo
+feito. `guedder_criar_lote` e `guedder_criar_cupom` usam o mesmo fluxo
+(`executarEscrita` em `src/index.ts`, peças em `src/escrita.ts`). Toda fase de
+toda escrita, e toda negação de escopo, sai como uma linha `{"audit":true,...}`
+no stderr (CloudWatch). Dado pessoal (CPF, e-mail, telefone, código de ingresso,
+cartão) sai como `[redigido]` em todas as tools (`CHAVES_SENSIVEIS`, GUE-484).
+
+Com mais de uma réplica, `GUEDDER_MCP_CONFIRM_SECRET` precisa estar definido (e
+igual em todas): senão a fase 2 cai noutra task e o código não confere.
 
 O MCP **não** reimplementa regra de cancelamento. Janela de 7 dias, 48h do
 evento e ingresso já bipado continuam sendo da API

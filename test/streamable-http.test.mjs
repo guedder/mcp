@@ -36,9 +36,11 @@ test("expõe ferramentas via Streamable HTTP stateless em /mcp", async () => {
     const json = body.match(/^data: (.+)$/m)?.[1] ?? body;
     const payload = JSON.parse(json);
     // 12 tools genéricas de leitura + descobrir_eventos + detalhes_evento +
-    // status_da_compra (compostas) + cancelar_pedido (escrita). rastrear_compra
-    // não conta aqui: exige GUEDDER_MCP_LOG_GROUPS, ausente neste teste.
-    assert.equal(payload.result.tools.length, 16);
+    // status_da_compra (compostas) + cancelar_pedido (escrita) + as 4 de gestão
+    // de evento (ingressos_vendidos_periodo, lotes_esgotados, criar_lote,
+    // criar_cupom). rastrear_compra não conta aqui: exige GUEDDER_MCP_LOG_GROUPS,
+    // ausente neste teste.
+    assert.equal(payload.result.tools.length, 20);
     assert.equal(payload.result.tools[0].annotations.readOnlyHint, true);
     assert.equal(payload.result.tools[0].annotations.destructiveHint, false);
     assert.equal(payload.result.tools[0].annotations.idempotentHint, true);
