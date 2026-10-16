@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { codigoDeConfirmacao, confirmacaoConfere, redigir } from "../dist/escrita.js";
+import { codigoDeConfirmacao, confirmacaoConfere, hmacDeConsent, jsonCanonico, redigir } from "../dist/escrita.js";
 
 const PESSOA = { token: "t", email: "a@b.c", usuarioId: "u-1", isAdmin: false, scopes: [] };
 const ARGS = { eventoId: "e-1", nome: "Pista", estoqueInicial: 100 };
@@ -77,4 +77,29 @@ test("confirmação com caracteres não-ASCII é recusada, não lança", () => {
   assert.doesNotThrow(() => confirmacaoConfere("ÁÁÁÁÁÁÁÁÁÁ", "op", "e-1", ARGS, PESSOA));
   assert.equal(confirmacaoConfere("ÁÁÁÁÁÁÁÁÁÁ", "op", "e-1", ARGS, PESSOA), false);
   assert.equal(confirmacaoConfere("abcdefghij", "op", "e-1", ARGS, PESSOA), false);
+});
+
+// Review do #19 (Codex): com a mesma chave, a tela de consent pública devolvia
+// em `consentido` o HMAC que a escrita espera. Réplica do ataque: o cliente põe
+// op/alvo/args/usuário nos quatro campos da prova e transforma o digest.
+test("a prova de consent não serve de código de confirmação", () => {
+  const comoCodigo = (d) => d.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 10);
+  const forjado = comoCodigo(hmacDeConsent(["op", "e-1", jsonCanonico(ARGS), "u-1"]));
+  assert.equal(confirmacaoConfere(forjado, "op", "e-1", ARGS, PESSOA), false);
+  assert.notEqual(forjado, codigoDeConfirmacao("op", "e-1", ARGS, PESSOA));
+});
+
+test("nome de pessoa em ingresso é redigido; nome de lote e de evento, não", () => {
+  const r = redigir({
+    // Forma documentada de IngressoAssentoVO (guedder_meus_ingressos).
+    ingresso: { ingressoId: "i1", nome: "Fulana de Tal", nomeLote: "Pista", nomeEvento: "Show", codigo: "ING-1" },
+    lote: { id: "l1", nome: "Pista", estoqueInicial: 10 },
+    evento: { id: "e1", nome: "Show", dataInicio: "2026-11-01" },
+  });
+  assert.equal(r.ingresso.nome, "[redigido]");
+  assert.equal(r.ingresso.codigo, "[redigido]");
+  assert.equal(r.ingresso.nomeLote, "Pista");
+  assert.equal(r.ingresso.nomeEvento, "Show");
+  assert.equal(r.lote.nome, "Pista");
+  assert.equal(r.evento.nome, "Show");
 });

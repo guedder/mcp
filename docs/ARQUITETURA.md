@@ -486,7 +486,7 @@ nomes de lote já resolvidos, no cupom) e um código. A segunda, com aquele cód
 e **os mesmos argumentos**, executa. O código (`src/escrita.ts`) é
 
 ```
-HMAC-SHA256(segredo, op \n alvo \n JSON canônico dos args \n usuário \n bloco de 10 min)
+HMAC-SHA256(chave_confirmacao, JSON[op, alvo, JSON canônico dos args, usuário, bloco de 10 min])
 ```
 
 truncado em 10 caracteres `[A-Z0-9]`, comparado com `timingSafeEqual`, válido no
@@ -530,7 +530,7 @@ evitou um segundo helper de POST.
 **O segredo** vem de `GUEDDER_MCP_CONFIRM_SECRET` (Secrets Manager → env da
 task); sem ele, `randomBytes(32)` no boot, que só serve a um processo (stdio,
 dev). Com N réplicas o segredo **tem** que ser compartilhado, senão a fase 2 cai
-noutra task e o código não confere. O mesmo segredo serve à prova de consent.
+noutra task e o código não confere. O mesmo segredo alimenta a prova de consent, mas **cada uma usa uma chave derivada própria** (`guedder-mcp/confirmacao/v1`, `guedder-mcp/consent/v1`): com a mesma chave, a tela de consent, que é pública, devolvia em `consentido` o HMAC que a escrita espera, bastando pôr op/alvo/args/usuário nos quatro campos do pedido. O material vai em JSON, não em `join("\n")`, para quebra de linha num campo não deslocar os outros.
 
 ### Auditoria das escritas e das negações
 

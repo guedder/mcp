@@ -17,9 +17,22 @@ import type { Caller } from "./auth.js";
  * segredo por processo a confirmação simplesmente não confere. O aleatório fica
  * para stdio e dev local, onde só existe um processo.
  */
-export const SEGREDO: Buffer = process.env.GUEDDER_MCP_CONFIRM_SECRET?.trim()
+const SEGREDO: Buffer = process.env.GUEDDER_MCP_CONFIRM_SECRET?.trim()
   ? Buffer.from(process.env.GUEDDER_MCP_CONFIRM_SECRET.trim())
   : randomBytes(32);
+
+/**
+ * Uma chave por finalidade, derivada do segredo. Com a mesma chave nos dois
+ * HMACs, a tela de consent (pública) virava oráculo do código de confirmação:
+ * o cliente pedia `/authorize?client_id=<op>&redirect_uri=<alvo>&state=<args>
+ * &code_challenge=<usuário>` e recebia, em `consentido`, exatamente o HMAC que a
+ * escrita espera, sem a pessoa ver resumo nenhum. Chaves separadas fecham isso
+ * por construção; o material em JSON (não `join("\n")`) fecha também a
+ * ambiguidade de campo com quebra de linha dentro de um mesmo domínio.
+ */
+const chaveDe = (finalidade: string) => createHmac("sha256", SEGREDO).update(`guedder-mcp/${finalidade}/v1`).digest();
+const CHAVE_CONFIRMACAO = chaveDe("confirmacao");
+const CHAVE_CONSENT = chaveDe("consent");
 
 export function usuarioDe(caller?: Caller): string {
   return caller?.usuarioId ?? caller?.email ?? "local";
@@ -61,12 +74,18 @@ export function codigoDeConfirmacao(
   deslocamento = 0,
 ): string {
   const bloco = Math.floor(Date.now() / BLOCO_MS) - deslocamento;
-  return createHmac("sha256", SEGREDO)
-    .update([op, alvo, jsonCanonico(args), usuarioDe(caller), bloco].join("\n"))
+  return createHmac("sha256", CHAVE_CONFIRMACAO)
+    .update(JSON.stringify([op, alvo, jsonCanonico(args), usuarioDe(caller), bloco]))
     .digest("base64url")
     .replace(/[^A-Za-z0-9]/g, "")
     .toUpperCase()
     .slice(0, 10);
+}
+
+/** HMAC da prova de consent (ver `provaDeConsent` em index.ts), na chave própria. */
+export function hmacDeConsent(campos: string[], deslocamento = 0): string {
+  const bloco = Math.floor(Date.now() / BLOCO_MS) - deslocamento;
+  return createHmac("sha256", CHAVE_CONSENT).update(JSON.stringify([...campos, bloco])).digest("base64url");
 }
 
 /**
@@ -156,6 +175,13 @@ export const CHAVES_SENSIVEIS = new Set(
 const CARA_DE_LOTE_OU_EVENTO = ["estoqueInicial", "dataInicio"];
 const CARA_DE_INGRESSO = ["ingressoId", "idPedido", "nomePortador", "checkIn"];
 
+/**
+ * Chaves que só são pessoais dentro de um ingresso: em `IngressoAssentoVO`,
+ * `nome` é o nome de quem comprou ou recebeu; em lote e evento é o nome do lote
+ * e do evento, que precisa continuar visível.
+ */
+const PESSOAL_EM_INGRESSO = new Set(["nome", "codigo"]);
+
 function codigoPublico(o: Record<string, unknown>): boolean {
   return CARA_DE_LOTE_OU_EVENTO.some((k) => k in o) && !CARA_DE_INGRESSO.some((k) => k in o);
 }
@@ -181,7 +207,10 @@ export function redigir<T>(valor: T): T {
   const o = valor as Record<string, unknown>;
   const saida: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) {
-    const sensivel = CHAVES_SENSIVEIS.has(k.toLowerCase()) || (k === "codigo" && !codigoPublico(o));
+    const sensivel =
+      CHAVES_SENSIVEIS.has(k.toLowerCase()) ||
+      (k === "codigo" && !codigoPublico(o)) ||
+      (PESSOAL_EM_INGRESSO.has(k) && CARA_DE_INGRESSO.some((m) => m in o));
     saida[k] = sensivel && v !== null && v !== undefined ? REDIGIDO : redigir(v);
   }
   return saida as T;

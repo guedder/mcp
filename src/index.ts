@@ -14,7 +14,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
@@ -31,7 +31,7 @@ import {
   type Caller,
 } from "./auth.js";
 import { auditoriaConfigFromEnv, criarAuditoria } from "./auditoria.js";
-import { SEGREDO, auditar, codigoDeConfirmacao, confirmacaoConfere, hashArgs, mascararTexto, redigir, usuarioDe } from "./escrita.js";
+import { auditar, hmacDeConsent, codigoDeConfirmacao, confirmacaoConfere, hashArgs, mascararTexto, redigir, usuarioDe } from "./escrita.js";
 
 const BASE = (process.env.GUEDDER_API_BASE ?? "https://api.guedder.com").replace(/\/+$/, "");
 const BEARER_TOKEN = process.env.GUEDDER_BEARER_TOKEN?.trim();
@@ -1642,18 +1642,10 @@ const TEXTO_DO_ESCOPO: Record<string, string> = {
  * aqui.
  */
 function provaDeConsent(pedido: URLSearchParams, deslocamento = 0): string {
-  const bloco = Math.floor(Date.now() / 600_000) - deslocamento;
-  return createHmac("sha256", SEGREDO)
-    .update(
-      [
-        pedido.get("client_id") ?? "",
-        pedido.get("redirect_uri") ?? "",
-        pedido.get("state") ?? "",
-        pedido.get("code_challenge") ?? "",
-        bloco,
-      ].join("\n"),
-    )
-    .digest("base64url");
+  return hmacDeConsent(
+    ["client_id", "redirect_uri", "state", "code_challenge"].map((k) => pedido.get(k) ?? ""),
+    deslocamento,
+  );
 }
 
 function consentiuDeVerdade(pedido: URLSearchParams): boolean {
