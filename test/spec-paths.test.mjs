@@ -10,6 +10,7 @@ function sampleArgs(schema) {
   const out = {};
   for (const [name, prop] of Object.entries(schema.properties ?? {})) {
     if (prop.type === "integer" || prop.type === "number") out[name] = 1;
+    else if (prop.format === "uuid") out[name] = "11111111-1111-1111-1111-111111111111";
     else if (prop.type === "array") out[name] = ["amostra"];
     else out[name] = "amostra";
   }
@@ -30,6 +31,11 @@ function sampleArgs(schema) {
  *                               coberto por comprador.test.mjs.
  *   guedder_status_da_compra  — uma chamada, mas reshapeia o resultado (agrega
  *                               por idPedido); coberto por comprador.test.mjs.
+ *   guedder_ingressos_vendidos_periodo, guedder_lotes_esgotados
+ *                             — leitura sobre endpoints v1 (fora do openapi-v3),
+ *                               paginada e agregada; coberto por mvp.test.mjs.
+ *   guedder_criar_lote, guedder_criar_cupom
+ *                             — escrevem (POST v1); cobertos por mvp.test.mjs.
  */
 const FORA_DO_CONTRATO_GET = new Set([
   "guedder_rastrear_compra",
@@ -37,6 +43,10 @@ const FORA_DO_CONTRATO_GET = new Set([
   "guedder_descobrir_eventos",
   "guedder_detalhes_evento",
   "guedder_status_da_compra",
+  "guedder_ingressos_vendidos_periodo",
+  "guedder_lotes_esgotados",
+  "guedder_criar_lote",
+  "guedder_criar_cupom",
 ]);
 
 test("cada tool chama o path e os query params da sua operacao OpenAPI", async () => {

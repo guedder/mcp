@@ -194,10 +194,13 @@ test("status_da_compra agrega os ingressos do mesmo pedido", async () => {
       const resultado = JSON.parse(r.content[0].text);
       assert.equal(resultado.nomeEvento, "Show A");
       assert.equal(resultado.quantidade, 2);
+      // GUE-484: o código do ingresso é a credencial de entrada no portão e
+      // não vai para o contexto do LLM. A pessoa o vê no app, não aqui.
       assert.deepEqual(
-        resultado.ingressos.map((i) => i.codigo).sort(),
-        ["cod1", "cod2"],
+        resultado.ingressos.map((i) => i.codigo),
+        ["[redigido]", "[redigido]"],
       );
+      assert.doesNotMatch(r.content[0].text, /cod1|cod2/);
     },
   );
 });

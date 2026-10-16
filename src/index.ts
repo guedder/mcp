@@ -6,14 +6,15 @@
  * to authenticated endpoints. OAuth2 can later replace tokenProvider() without
  * changing the tools or the HTTP client.
  *
- * Wrappers finos sobre a v3: leitura via `apiGet`, e uma única escrita
- * (`guedder_cancelar_pedido`) via `apiPost`, atrás de escopo e confirmação em
- * duas fases. Não existe helper genérico de verbo, e isso é deliberado.
+ * Wrappers finos sobre a API: leitura via `apiGet`, e três escritas
+ * (`guedder_cancelar_pedido`, `guedder_criar_lote`, `guedder_criar_cupom`) via
+ * `apiPost`, sempre por `executarEscrita` (escopo + confirmação em duas fases +
+ * auditoria). Não existe helper genérico de verbo, e isso é deliberado.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { z } from "zod";
@@ -30,6 +31,7 @@ import {
   type Caller,
 } from "./auth.js";
 import { auditoriaConfigFromEnv, criarAuditoria } from "./auditoria.js";
+import { auditar, hmacDeConsent, codigoDeConfirmacao, confirmacaoConfere, hashArgs, mascararTexto, redigir, usuarioDe } from "./escrita.js";
 
 const BASE = (process.env.GUEDDER_API_BASE ?? "https://api.guedder.com").replace(/\/+$/, "");
 const BEARER_TOKEN = process.env.GUEDDER_BEARER_TOKEN?.trim();
@@ -63,6 +65,52 @@ async function tokenProvider(caller?: Caller): Promise<string> {
   return BEARER_TOKEN;
 }
 
+/**
+ * Erro de API com o status à mão, para a tool decidir a mensagem (nome
+ * duplicado, por exemplo) sem casar regex no texto.
+ *
+ * O prefixo `<VERBO> <path> -> <status>` é contrato: `guedder_detalhes_evento`
+ * reconhece o 404 de `parametros-venda` por ele.
+ */
+class ApiError extends Error {
+  constructor(
+    metodo: string,
+    path: string,
+    readonly status: number,
+    statusText: string,
+    readonly corpo: string,
+  ) {
+    super(`${metodo} ${path} -> ${status} ${DICA_POR_STATUS[status] ?? `${statusText}${corpo ? `: ${corpoSeguro(corpo)}` : ""}`}`);
+  }
+}
+
+/**
+ * Corpo de erro da API vai para o contexto do LLM via mensagem de erro, então
+ * passa pela mesma redação da saída de sucesso, e é truncado: corpo de erro do
+ * Spring pode trazer o DTO inteiro de volta.
+ */
+function corpoSeguro(corpo: string): string {
+  let texto: string;
+  try {
+    texto = JSON.stringify(redigir(JSON.parse(corpo)));
+  } catch {
+    texto = mascararTexto(corpo);
+  }
+  return texto.length > 300 ? `${texto.slice(0, 300)}…` : texto;
+}
+
+/**
+ * Os três status que o modelo não sabe resolver sozinho, com o que fazer.
+ * Sem isto ele tenta de novo em laço num 429, ou culpa o evento num 401.
+ */
+const DICA_POR_STATUS: Record<number, string> = {
+  401: "Não autorizado: a API Guedder recusou a credencial (login expirado ou revogado). A pessoa precisa reconectar o agente.",
+  403: "Proibido: a conta logada não tem permissão para esta operação neste evento.",
+  429: "Limite de requisições da API atingido (30 a cada 10 segundos por usuário). Espere alguns segundos antes de tentar de novo.",
+};
+
+const TIMEOUT_MS = 15_000;
+
 async function apiGet(
   path: string,
   opts: { query?: Record<string, unknown>; auth?: boolean; caller?: Caller } = {},
@@ -71,15 +119,15 @@ async function apiGet(
   for (const [k, v] of Object.entries(opts.query ?? {})) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   }
-  const run = async () => {
-    const headers: Record<string, string> = { accept: "application/json" };
-    if (opts.auth) headers.authorization = `Bearer ${await tokenProvider(opts.caller)}`;
-    return fetch(url, { headers });
-  };
-  let res = await run();
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (opts.auth) headers.authorization = `Bearer ${await tokenProvider(opts.caller)}`;
+  return lerResposta("GET", path, await fetch(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) }));
+}
+
+async function lerResposta(metodo: string, path: string, res: Response): Promise<unknown> {
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`GET ${path} -> ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 500)}` : ""}`);
+    const corpo = await res.text().catch(() => "");
+    throw new ApiError(metodo, path, res.status, res.statusText, corpo);
   }
   const ct = res.headers.get("content-type") ?? "";
   return ct.includes("application/json") ? res.json() : res.text();
@@ -89,54 +137,148 @@ async function apiGet(
  * Escrita na API, em nome do usuário.
  *
  * Deliberadamente NÃO é `apiRequest(metodo, ...)`: um helper genérico de verbo
- * transformaria "este servidor escreve em dois lugares" em "este servidor pode
- * escrever em qualquer lugar", e a diferença só apareceria numa auditoria.
- * Enquanto houver uma escrita só, existe um helper só — e somar a segunda é uma
- * decisão que alguém toma de olho aberto, não um parâmetro que já estava lá.
+ * transformaria "este servidor escreve em três lugares" em "este servidor pode
+ * escrever em qualquer lugar", e a diferença só apareceria numa auditoria
+ * (ADR 0003). Quem chama é sempre `executarEscrita`, que já passou pelo escopo
+ * e pela confirmação.
+ *
+ * `body` opcional em vez de um segundo helper: o cancelamento não manda corpo,
+ * criar lote e cupom mandam JSON. Um helper só continua sendo um lugar só para
+ * revisar.
  */
-async function apiPost(path: string, opts: { caller?: Caller } = {}): Promise<unknown> {
+async function apiPost(path: string, opts: { caller?: Caller; body?: unknown } = {}): Promise<unknown> {
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    authorization: `Bearer ${await tokenProvider(opts.caller)}`,
+  };
+  if (opts.body !== undefined) headers["content-type"] = "application/json";
   const res = await fetch(new URL(BASE + path), {
     method: "POST",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${await tokenProvider(opts.caller)}`,
-    },
+    headers,
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`POST ${path} -> ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 500)}` : ""}`);
-  }
-  const ct = res.headers.get("content-type") ?? "";
-  return ct.includes("application/json") ? res.json() : res.text();
+  return lerResposta("POST", path, res);
 }
 
 /**
- * Segredo de processo para os códigos de confirmação. Aleatório por instância, e
- * isso basta: o código vive dentro de uma conversa, e a conversa não sobrevive a
- * um restart de qualquer jeito.
- *
- * ponytail: segredo por processo, não por cluster. Com mais de uma réplica a
- * confirmação pode cair noutra e a pessoa confirma de novo — atrito aceitável
- * hoje. Se virar incômodo, o upgrade é uma chave em SSM lida no boot, não uma
- * sessão em banco.
+ * Portão de escopo de toda tool, com a negação auditada (o PRD de consent pede
+ * "nenhuma chamada fora do consentido", e só dá para medir o que foi logado).
+ * `exigirEscopo` continua sendo a checagem única (auth.ts); isto só soma o log.
  */
-const SEGREDO_DE_CONFIRMACAO = randomBytes(32);
+function portaoDeEscopo(tool: string, escopo: string, caller?: Caller, eventoId?: string): void {
+  if (!AUTH) return;
+  if (!caller) throw new AuthError("Token ausente: esta tool age em nome de alguém.");
+  try {
+    exigirEscopo(caller, escopo);
+  } catch (e) {
+    if (e instanceof EscopoError) auditar({ tool, fase: "negado", escopo, usuario: usuarioDe(caller), eventoId });
+    throw e;
+  }
+}
+
+type Resposta = { content: { type: "text"; text: string }[]; structuredContent?: { result: unknown }; isError?: true };
+
+function ok(data: unknown): Resposta {
+  const limpo = redigir(data);
+  return {
+    structuredContent: { result: limpo },
+    content: [{ type: "text" as const, text: JSON.stringify(limpo, null, 2) }],
+  };
+}
+
+function falha(e: any, escopo?: string): Resposta {
+  const motivo = e instanceof EscopoError && escopo ? `${e.message} (escopo \`${escopo}\`)` : (e?.message ?? String(e));
+  // Toda saída passa pela redação, inclusive a de erro (o corpo da API já vem
+  // limpo em ApiError; isto cobre o resto).
+  return { content: [{ type: "text" as const, text: `Erro: ${mascararTexto(motivo)}` }], isError: true };
+}
 
 /**
- * Código que amarra a confirmação a UM pedido e a UMA pessoa.
+ * Fluxo de toda escrita: escopo, confirmação em duas fases, auditoria das duas.
  *
- * Imprevisível de propósito. Se fosse fixo (um "CONFIRMAR" da vida), o modelo
- * poderia mandá-lo de primeira e a fase de resumo nunca chegaria à pessoa — que
- * é justamente a parte que faz o consent valer alguma coisa numa operação que
- * devolve dinheiro.
+ * `preparar` roda nas DUAS fases e é onde mora tudo que pode recusar antes da
+ * API (data sem offset, lote inexistente): erro ali não escreve nada, em
+ * nenhuma fase. Rodar de novo na fase 2 é de propósito: o que se executa é o
+ * que foi resolvido agora, não o que ficou num cache entre as chamadas.
  */
-function codigoDeConfirmacao(pedidoId: string, caller?: Caller): string {
-  return createHmac("sha256", SEGREDO_DE_CONFIRMACAO)
-    .update(`${pedidoId}\n${caller?.usuarioId ?? caller?.email ?? "local"}`)
-    .digest("base64url")
-    .replace(/[^A-Za-z0-9]/g, "")
-    .toUpperCase()
-    .slice(0, 10);
+async function executarEscrita(p: {
+  tool: string;
+  escopo: string;
+  alvo: string;
+  eventoId?: string;
+  args: Record<string, unknown>;
+  caller?: Caller;
+  /**
+   * `amarra`: o que `preparar` resolveu e precisa entrar no código além dos
+   * args (no cupom, os pares {id, nome} dos lotes). Sem isso, recriar um lote
+   * com o mesmo nome entre as fases faria o código da fase 1 executar sobre
+   * outro id, que a pessoa não viu.
+   */
+  preparar: () => Promise<{ resumo: string; executar: () => Promise<unknown>; amarra?: unknown }>;
+  traduzirErro?: (e: ApiError) => string | undefined;
+}): Promise<Resposta> {
+  const { confirmacao, ...argsDaOperacao } = p.args;
+  const base = {
+    tool: p.tool,
+    escopo: p.escopo,
+    usuario: usuarioDe(p.caller),
+    eventoId: p.eventoId,
+    alvo: p.alvo,
+    argsHash: hashArgs(argsDaOperacao),
+  };
+  try {
+    portaoDeEscopo(p.tool, p.escopo, p.caller, p.eventoId);
+  } catch (e: any) {
+    return falha(e, p.escopo);
+  }
+  try {
+    let preparado: Awaited<ReturnType<typeof p.preparar>>;
+    try {
+      preparado = await p.preparar();
+    } catch (e: any) {
+      auditar({ ...base, fase: "recusado", resultado: `erro ${e instanceof ApiError ? e.status : "local"}` });
+      throw e;
+    }
+    const { resumo, executar, amarra } = preparado;
+    const material = amarra === undefined ? argsDaOperacao : { args: argsDaOperacao, amarra };
+
+    if (confirmacao === undefined || confirmacao === "") {
+      auditar({ ...base, fase: "resumo" });
+      const codigo = codigoDeConfirmacao(p.tool, p.alvo, material, p.caller);
+      return {
+        content: [{
+          type: "text" as const,
+          text: `${resumo}\n\nNada foi feito ainda. Mostre isto à pessoa e, se ela confirmar, chame de novo com os MESMOS argumentos e confirmacao="${codigo}".`,
+        }],
+      };
+    }
+
+    if (!confirmacaoConfere(confirmacao, p.tool, p.alvo, material, p.caller)) {
+      auditar({ ...base, fase: "codigo_invalido" });
+      return {
+        content: [{
+          type: "text" as const,
+          text:
+            "Confirmação inválida: o código não corresponde a esta operação com estes argumentos, ou expirou " +
+            "(vale de 10 a 20 minutos). Um código vale para uma operação só. Chame sem `confirmacao` para obter um novo.",
+        }],
+        isError: true,
+      };
+    }
+
+    try {
+      const data = await executar();
+      auditar({ ...base, fase: "execucao", resultado: "ok" });
+      return ok(data);
+    } catch (e: any) {
+      auditar({ ...base, fase: "execucao", resultado: `erro ${e instanceof ApiError ? e.status : "local"}` });
+      const traduzido = e instanceof ApiError ? p.traduzirErro?.(e) : undefined;
+      return falha(traduzido ? new Error(traduzido) : e);
+    }
+  } catch (e: any) {
+    return falha(e, p.escopo);
+  }
 }
 
 type Tool = {
@@ -211,6 +353,149 @@ const OPENAPI_INDEX = {
 
 const enc = encodeURIComponent;
 
+/**
+ * Todo id que vira segmento de path passa por um destes. `encodeURIComponent`
+ * não codifica `.`, então `eventoId=".."` viraria `/api/v1/lote/../adicionar`
+ * depois da normalização da URL: outro endpoint, com o token da pessoa.
+ */
+const UUID_ = z.string().uuid("Use o UUID do evento");
+const ID_OU_CODIGO = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Id ou código alfanumérico (letras, números, - e _)");
+
+
+// ── Apoio das tools de gestão de evento (GUE-550) ───────────────────────────
+// Todas falam com endpoints v1: os v3 de lote, cupom e vendas existem no
+// api.yaml mas respondem 501. Por isso ficam fora do spec-paths.
+
+const FUSO = "America/Sao_Paulo";
+const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DATA_COM_OFFSET_RE = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z|[+-](0\d|1[0-3]):[0-5]\d|[+-]14:00)$/;
+
+/**
+ * 2026-02-30 casa a regex mas o `Date` rola para 02/03; só vale o dia que volta
+ * igual. 2026-13-01 nem vira data (`Invalid Date`), e `toISOString()` lançaria
+ * RangeError de dentro do refine, em vez de erro de validação.
+ */
+const diaExiste = (dia: string) => {
+  const d = new Date(`${dia}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === dia;
+};
+
+const DIA = z
+  .string()
+  .regex(DIA_RE, "Use AAAA-MM-DD")
+  .refine(diaExiste, "Dia inexistente no calendário");
+const DATA_COM_OFFSET = z
+  .string()
+  .regex(DATA_COM_OFFSET_RE, "Data com offset explícito, ex.: 2026-11-01T20:00:00-03:00")
+  .refine((v) => diaExiste(v.slice(0, 10)), "Dia inexistente no calendário")
+  // O offset vai de -14:00 a +14:00 (a regex já recorta); o parse completo pega o resto.
+  .refine((v) => !Number.isNaN(Date.parse(v)), "Data/hora inválida");
+const MAX_DIAS_PERIODO = 31;
+
+/**
+ * Teto de páginas de 100 itens. A API limita 30 requisições a cada 10 s por
+ * usuário, e uma tool que pagina sem teto queima o limite da pessoa inteira.
+ *
+ * ponytail: teto fixo de 2.000 itens; com evento maior que isso a tool recusa
+ * em vez de devolver número parcial. Upgrade é um endpoint agregado na API.
+ */
+const TETO_PAGINAS = 20;
+
+const hojeEmSaoPaulo = () => new Intl.DateTimeFormat("en-CA", { timeZone: FUSO }).format(new Date());
+
+const DIA_MS = 86_400_000;
+
+/** Conta os dias antes de montar a lista: 0000-01-01..9999-12-31 não pode alocar milhões de strings. */
+const quantosDias = (de: string, ate: string) =>
+  Math.floor((Date.parse(`${ate}T00:00:00Z`) - Date.parse(`${de}T00:00:00Z`)) / DIA_MS) + 1;
+
+function diasDoPeriodo(de: string, ate: string): string[] {
+  const dias: string[] = [];
+  for (let d = new Date(`${de}T00:00:00Z`); d <= new Date(`${ate}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+    dias.push(d.toISOString().slice(0, 10));
+  }
+  return dias;
+}
+
+/** `LocalDate` sai como "2026-10-16" no Jackson 3, mas como [2026,10,16] se alguém ligar timestamps. */
+function dataIso(d: unknown): string {
+  return Array.isArray(d) ? d.map((n, i) => String(n).padStart(i ? 2 : 4, "0")).join("-") : String(d).slice(0, 10);
+}
+
+const brl = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
+
+/** Todos os lotes do evento (Spring `Page` VIA_DTO: `content` + `page.totalPages`). */
+async function listarLotes(eventoId: string, caller?: Caller): Promise<any[]> {
+  const lotes: any[] = [];
+  for (let page = 0; page < TETO_PAGINAS; page++) {
+    const r: any = await apiGet(`/api/v1/lote/${enc(eventoId)}`, { query: { page, size: 100 }, auth: true, caller });
+    lotes.push(...(r?.content ?? []));
+    if (page + 1 >= (r?.page?.totalPages ?? 0)) return lotes;
+  }
+  throw new Error(`O evento tem mais de ${TETO_PAGINAS * 100} lotes; esta tool não pagina além disso.`);
+}
+
+/**
+ * Ingressos pagos por dia, de hoje para trás até `de`. A view
+ * (`view_contagem_ingressos_vendidos`) só tem linha em dia com venda, e o dia
+ * é o da compra em São Paulo (`LocalDate`).
+ */
+async function vendasPorDia(eventoId: string, de: string, caller?: Caller) {
+  const porDia = new Map<string, number>();
+  let nomeEvento: string | undefined;
+  for (let page = 0; page < TETO_PAGINAS; page++) {
+    const r: any = await apiGet(`/api/v1/metrica/${enc(eventoId)}/ultimas-vendas`, {
+      // `dataCompra` mora no @EmbeddedId da view, daí o caminho `viewId.`.
+      query: { sort: "viewId.dataCompra,desc", page, size: 100 },
+      auth: true,
+      caller,
+    });
+    nomeEvento ??= r?.data?.nomeEvento;
+    const linhas: any[] = r?.data?.vendasList ?? [];
+    for (const l of linhas) {
+      const dia = dataIso(l?.dataCompra);
+      porDia.set(dia, (porDia.get(dia) ?? 0) + (Number(l?.ingressosPagos) || 0));
+    }
+    const ultima = linhas.at(-1);
+    if (!ultima || dataIso(ultima.dataCompra) < de || page + 1 >= (r?.page?.totalPages ?? 0)) {
+      return { nomeEvento, porDia };
+    }
+  }
+  throw new Error(
+    `Histórico de vendas longo demais: li ${TETO_PAGINAS} páginas (${TETO_PAGINAS * 100} dias com venda, do mais recente para trás) ` +
+      `sem chegar a ${de}. Consulte um período mais recente.`,
+  );
+}
+
+
+/**
+ * Nome de lote → lote, sem caixa e sem espaço nas pontas. Qualquer nome que não
+ * resolva para EXATAMENTE um lote derruba a operação inteira: cupom aplicado a
+ * menos lotes do que a pessoa pediu é desconto errado em produção.
+ */
+async function resolverLotes(eventoId: string, nomes: string[], caller?: Caller): Promise<{ id: string; nome: string }[]> {
+  const todos = await listarLotes(eventoId, caller);
+  const norma = (s: unknown) => String(s ?? "").trim().toLocaleLowerCase("pt-BR");
+  const faltando: string[] = [];
+  const ambiguos: string[] = [];
+  const achados = nomes.flatMap((n) => {
+    const casam = todos.filter((l) => norma(l?.nome) === norma(n));
+    if (casam.length === 0) faltando.push(n);
+    if (casam.length > 1) ambiguos.push(n);
+    return casam.length === 1 ? [{ id: String(casam[0].id), nome: String(casam[0].nome) }] : [];
+  });
+  if (faltando.length || ambiguos.length) {
+    const partes = [
+      faltando.length ? `não encontrei ${faltando.map((n) => `"${n}"`).join(", ")}` : "",
+      ambiguos.length ? `mais de um lote se chama ${ambiguos.map((n) => `"${n}"`).join(", ")} (sessões diferentes)` : "",
+    ].filter(Boolean);
+    throw new Error(
+      `Lotes: ${partes.join("; ")}. Lotes deste evento: ${todos.map((l) => `"${l?.nome}"`).join(", ") || "nenhum"}. Nada foi criado.`,
+    );
+  }
+  return achados;
+}
+
 const TOOLS: Tool[] = [
   {
     name: "guedder_listar_categorias_evento",
@@ -227,7 +512,7 @@ const TOOLS: Tool[] = [
     title: "Lote por código/ID",
     description: "Retorna um lote pelo código ou ID do evento e do lote (aceita UUID ou código). Requer auth.",
     openApiOperationId: "getLotePorCodigoOuId",
-    inputSchema: { codigoOrEventoId: z.string(), codigoOrLoteId: z.string() },
+    inputSchema: { codigoOrEventoId: ID_OU_CODIGO, codigoOrLoteId: ID_OU_CODIGO },
     auth: true,
     build: (a) => ({ path: `/api/v3/eventos/${enc(a.codigoOrEventoId)}/lotes/${enc(a.codigoOrLoteId)}` }),
   },
@@ -238,7 +523,7 @@ const TOOLS: Tool[] = [
       "Lista ingressos de um evento para check-in (acesso produtor/admin do evento). Filtro por texto livre (nome/email/código), paginação, sessão e ordenação.",
     openApiOperationId: "buscarIngressosPorEvento",
     inputSchema: {
-      eventoId: z.string(),
+      eventoId: ID_OU_CODIGO,
       filtro: z.string().optional().describe("Busca por nome, email ou código"),
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de ingressos retornados; máximo 100"),
       sessaoId: z.string().optional(),
@@ -282,7 +567,7 @@ const TOOLS: Tool[] = [
       "Extrato de compras de um evento para gestão de vendas. Filtre por texto e status; retorna até max_results da primeira página. Requer permissão sobre o evento.",
     openApiOperationId: "findExtratosByEvento",
     inputSchema: {
-      eventoId: z.string().describe("UUID do evento"),
+      eventoId: UUID_,
       filtro: z.string().optional().describe("Busca textual no extrato"),
       status: z.array(z.string()).optional().describe("Status de compra, ex.: PAGO ou PENDENTE"),
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de compras retornadas; máximo 100"),
@@ -300,7 +585,7 @@ const TOOLS: Tool[] = [
       "Retorna as vendas recentes de um evento para auditoria operacional. Não é uma trilha de alterações do evento; requer permissão de leitura de vendas.",
     openApiOperationId: "getContagemIngressosVendidos",
     inputSchema: {
-      eventoId: z.string().describe("UUID do evento"),
+      eventoId: UUID_,
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de vendas retornadas; máximo 100"),
     },
     auth: true,
@@ -311,7 +596,7 @@ const TOOLS: Tool[] = [
     title: "Resumo de vendas do evento",
     description: "Agregados de vendas de um evento para gestão. Requer permissão de leitura de vendas.",
     openApiOperationId: "getResumoVendas",
-    inputSchema: { eventoId: z.string().describe("UUID do evento") },
+    inputSchema: { eventoId: UUID_ },
     auth: true,
     build: (a) => ({ path: `/api/v1/metrica/${enc(a.eventoId)}/resumo-vendas` }),
   },
@@ -370,7 +655,7 @@ const TOOLS: Tool[] = [
   },
 ];
 
-const INSTRUCTIONS = `MCP sobre a API Guedder v3 (plataforma de venda de ingressos). Quase tudo é leitura; há UMA operação que muda estado, descrita no fim.
+const INSTRUCTIONS = `MCP sobre a API Guedder (plataforma de venda de ingressos). Quase tudo é leitura; as operações que mudam estado estão descritas no fim.
 
 Tools por TAREFA, não por endpoint — cada uma pode chamar mais de uma operação
 da API por dentro. O endpoint concreto não importa para decidir qual tool usar.
@@ -397,13 +682,20 @@ Regras:
 - Toda tool devolve o JSON cru em content e em structuredContent.result. O schema de saída detalhado de cada tool está no resource guedder://openapi/v3/tools/<nome_da_tool>; o índice compacto de todas as operações está em guedder://openapi/v3.
 - Com GUEDDER_MCP_PUBLIC_ONLY=1 (agentes de comprador) só guedder_descobrir_eventos, guedder_detalhes_evento e guedder_listar_categorias_evento ficam disponíveis. As demais (ingressos, compras, auditoria, administrativo) exigem um token Guedder e perfil compatível.
 
-Escrita — guedder_cancelar_pedido:
-É a única tool que muda estado. Cancela um pedido da pessoa logada e devolve o valor pelo mesmo meio de pagamento; não tem desfazer.
-1. Chame SEM \`confirmacao\`. Nada é cancelado, e você recebe um resumo do efeito mais um código.
+Gestão de evento (para quem produz):
+- Ingressos vendidos num período (até 31 dias, dias em São Paulo; sem datas = hoje): guedder_ingressos_vendidos_periodo.
+- Lotes que esgotaram: guedder_lotes_esgotados.
+- Criar lote: guedder_criar_lote. Criar cupom: guedder_criar_cupom (lotes pelo NOME; sem lotes = todos).
+
+Escrita — guedder_cancelar_pedido, guedder_criar_lote, guedder_criar_cupom:
+São as únicas tools que mudam estado, e todas seguem o mesmo protocolo de duas fases:
+1. Chame SEM \`confirmacao\`. Nada é feito, e você recebe um resumo do efeito mais um código.
 2. Mostre esse resumo à pessoa e espere ela confirmar, com todas as letras.
-3. Só então chame de novo, passando aquele código em \`confirmacao\`.
-Nunca invente o código nem pule a etapa 2: o código existe justamente para garantir que a pessoa viu o que ia acontecer. Um código vale para um pedido só.
-A tool exige que a pessoa tenha concedido o escopo \`pedido:cancelar\` ao conectar. Se não concedeu, o erro diz isso, e o caminho é ela reconectar autorizando — não há como contornar por aqui.`;
+3. Só então chame de novo com os MESMOS argumentos, passando aquele código em \`confirmacao\`.
+Nunca invente o código nem pule a etapa 2: o código existe justamente para garantir que a pessoa viu o que ia acontecer. Ele vale para aquela operação, com aqueles argumentos, por 10 a 20 minutos; mudou um argumento, peça um código novo.
+Cancelar pedido devolve o valor pelo mesmo meio de pagamento e não tem desfazer.
+Cada tool exige um escopo concedido ao conectar (pedido:cancelar, lote:write, cupom:write; as de vendas, vendas:read). Se a pessoa não concedeu, o erro diz isso, e o caminho é ela reconectar autorizando — não há como contornar por aqui.
+Dados pessoais (CPF, e-mail, telefone, código de ingresso, cartão) chegam como "[redigido]" de propósito. Não tente obtê-los por outra tool.`;
 
 function createMcpServer(caller?: Caller): McpServer {
   const server = new McpServer({ name: "guedder-ops", version: "0.1.0" }, { instructions: INSTRUCTIONS });
@@ -450,18 +742,11 @@ function createMcpServer(caller?: Caller): McpServer {
       },
       async (args: any) => {
         try {
-          if (AUTH && t.escopo) {
-            if (!caller) throw new AuthError("Token ausente: esta tool age em nome de alguém.");
-            exigirEscopo(caller, t.escopo);
-          }
+          if (t.escopo) portaoDeEscopo(t.name, t.escopo, caller, args?.eventoId);
           const { path, query } = t.build(args ?? {});
-          const data = await apiGet(path, { query, auth: t.auth, caller });
-          return {
-            structuredContent: { result: data },
-            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-          };
+          return ok(await apiGet(path, { query, auth: t.auth, caller }));
         } catch (e: any) {
-          return { content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }], isError: true };
+          return falha(e, t.escopo);
         }
       },
     );
@@ -538,12 +823,9 @@ function createMcpServer(caller?: Caller): McpServer {
               },
             })
           : await apiGet("/api/v3/home/destaques");
-        return {
-          structuredContent: { result: data },
-          content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-        };
+        return ok(data);
       } catch (e: any) {
-        return { content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }], isError: true };
+        return falha(e);
       }
     },
   );
@@ -585,7 +867,7 @@ function createMcpServer(caller?: Caller): McpServer {
         "configurou — \"ainda não divulgado\", não é erro nem significa evento inexistente. " +
         "Schema detalhado: guedder://openapi/v3/tools/guedder_detalhes_evento.",
       inputSchema: {
-        eventoId: z.string().describe("UUID ou código alfanumérico do evento"),
+        eventoId: ID_OU_CODIGO.describe("UUID ou código alfanumérico do evento"),
         incluir: z
           .array(z.enum(["atracoes", "lotes", "venda"]))
           .optional()
@@ -613,12 +895,9 @@ function createMcpServer(caller?: Caller): McpServer {
             else throw e;
           }
         }
-        return {
-          structuredContent: { result: resultado },
-          content: [{ type: "text" as const, text: JSON.stringify(resultado, null, 2) }],
-        };
+        return ok(resultado);
       } catch (e: any) {
-        return { content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }], isError: true };
+        return falha(e);
       }
     },
   );
@@ -644,13 +923,13 @@ function createMcpServer(caller?: Caller): McpServer {
       },
       async (args: any) => {
         try {
-          if (AUTH) {
-            if (!caller) throw new AuthError("Token ausente: esta tool age em nome de alguém.");
-            exigirEscopo(caller, "conta:read");
-          }
+          portaoDeEscopo("guedder_status_da_compra", "conta:read", caller);
           const identificador = String(args?.identificador ?? "");
           const pagina: any = await apiGet("/api/v3/ingressos", { query: { size: 100, page: 0 }, auth: true, caller });
-          const doPedido = (pagina?.content ?? []).filter(
+          // Redige ANTES de recortar: o `codigo` do ingresso é a credencial de
+          // entrada, e o recorte abaixo o copiaria para fora do objeto que tem
+          // cara de ingresso, onde a redação já não o reconheceria.
+          const doPedido = redigir(pagina?.content ?? []).filter(
             (i: any) => i?.idPedido === identificador || i?.compraId === identificador,
           );
           if (doPedido.length === 0) {
@@ -669,12 +948,9 @@ function createMcpServer(caller?: Caller): McpServer {
             quantidade: doPedido.length,
             ingressos: doPedido.map((i: any) => ({ codigo: i.codigo, status: i.status, ativo: i.ativo })),
           };
-          return {
-            content: [{ type: "text" as const, text: JSON.stringify(resultado, null, 2) }],
-          };
+          return ok(resultado);
         } catch (e: any) {
-          const motivo = e instanceof EscopoError ? `${e.message} (escopo \`conta:read\`)` : (e?.message ?? String(e));
-          return { content: [{ type: "text" as const, text: `Erro: ${motivo}` }], isError: true };
+          return falha(e, "conta:read");
         }
       },
     );
@@ -702,7 +978,7 @@ function createMcpServer(caller?: Caller): McpServer {
           "e só chame de novo com o código depois que ela confirmar. Nunca invente o código. " +
           "O cancelamento é assíncrono: a API aceita o pedido e o estorno acontece em seguida no gateway.",
         inputSchema: {
-          pedidoId: z.string().describe("Id do pedido a cancelar, como aparece em guedder_minhas_compras"),
+          pedidoId: ID_OU_CODIGO.describe("Id do pedido a cancelar, como aparece em guedder_minhas_compras"),
           confirmacao: z
             .string()
             .optional()
@@ -723,44 +999,256 @@ function createMcpServer(caller?: Caller): McpServer {
       },
       async (args: any) => {
         const pedidoId = String(args?.pedidoId ?? "");
+        // `caller?` e não `caller!`: com Cognito ligado e transporte stdio o
+        // servidor sobe sem caller; `portaoDeEscopo` devolve o erro de
+        // autenticação certo em vez de um TypeError.
+        return executarEscrita({
+          tool: "guedder_cancelar_pedido",
+          escopo: "pedido:cancelar",
+          alvo: pedidoId,
+          args: args ?? {},
+          caller,
+          preparar: async () => ({
+            resumo:
+              `Vou cancelar o pedido ${pedidoId}. O valor volta pelo mesmo meio de pagamento, ` +
+              `e a operação não tem desfazer: reservar de novo depende de ainda haver lote disponível.`,
+            executar: () => apiPost(`/api/v3/pedidos/${enc(pedidoId)}/cancelamento`, { caller }),
+          }),
+        });
+      },
+    );
+  }
+
+  // ── Gestão de evento (GUE-550) ─────────────────────────────────────────────
+  // Duas leituras e duas escritas para quem produz o evento. Quem decide se a
+  // pessoa PODE ver vendas ou criar lote neste evento é a API; aqui o portão é
+  // só o escopo (o que ela deixou o agente fazer) e, nas escritas, a confirmação.
+  if (!PUBLIC_ONLY) {
+    server.registerTool(
+      "guedder_ingressos_vendidos_periodo",
+      {
+        title: "Ingressos vendidos no período",
+        description:
+          "Soma os ingressos pagos de UM evento num período de até 31 dias, com dias no fuso de São Paulo. " +
+          "Sem datas, é o dia de hoje. Devolve o total e a quebra por dia (0 nos dias sem venda). " +
+          "Exige o escopo vendas:read e permissão sobre o evento.",
+        inputSchema: {
+          eventoId: UUID_,
+          de: DIA.optional().describe("Primeiro dia (AAAA-MM-DD). Padrão: o mesmo de `ate`"),
+          ate: DIA.optional().describe("Último dia, inclusivo (AAAA-MM-DD). Padrão: hoje"),
+        },
+        outputSchema: TOOL_OUTPUT_SCHEMA,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      },
+      async (args: any) => {
         try {
-          // `caller?` e não `caller!`: com Cognito ligado e transporte stdio o
-          // servidor sobe sem caller, e o `!` derefava undefined, devolvendo um
-          // TypeError no lugar do erro de autenticação. Fechava do lado certo,
-          // mas com a mensagem errada.
-          if (AUTH) {
-            if (!caller) throw new AuthError("Token ausente: esta tool age em nome de alguém.");
-            exigirEscopo(caller, "pedido:cancelar");
+          const eventoId = String(args?.eventoId ?? "");
+          portaoDeEscopo("guedder_ingressos_vendidos_periodo", "vendas:read", caller, eventoId);
+          const ate: string = args?.ate ?? hojeEmSaoPaulo();
+          const de: string = args?.de ?? ate;
+          const n = quantosDias(de, ate);
+          if (n <= 0) throw new Error(`Período inválido: ${de} é depois de ${ate}.`);
+          if (n > MAX_DIAS_PERIODO) {
+            throw new Error(`Período de ${n} dias; o máximo é ${MAX_DIAS_PERIODO}. Divida em consultas menores.`);
           }
-
-          const esperado = codigoDeConfirmacao(pedidoId, caller);
-          if (args?.confirmacao !== esperado) {
-            const texto =
-              args?.confirmacao
-                ? `Confirmação inválida para o pedido ${pedidoId}. ` +
-                  `Um código vale para um pedido só, e não se reaproveita. ` +
-                  `Chame esta tool sem \`confirmacao\` para obter o código deste pedido.`
-                : `Vou cancelar o pedido ${pedidoId}. O valor volta pelo mesmo meio de pagamento, ` +
-                  `e a operação não tem desfazer: reservar de novo depende de ainda haver lote disponível.\n\n` +
-                  `Mostre isto à pessoa e, se ela confirmar, chame de novo com confirmacao="${esperado}".`;
-            return {
-              content: [{ type: "text" as const, text: texto }],
-              ...(args?.confirmacao ? { isError: true as const } : {}),
-            };
-          }
-
-          const data = await apiPost(`/api/v3/pedidos/${enc(pedidoId)}/cancelamento`, { caller });
-          return {
-            structuredContent: { result: data },
-            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-          };
+          const dias = diasDoPeriodo(de, ate);
+          const { nomeEvento, porDia } = await vendasPorDia(eventoId, de, caller);
+          const quebra = dias.map((data) => ({ data, ingressosPagos: porDia.get(data) ?? 0 }));
+          return ok({
+            eventoId,
+            nomeEvento,
+            de,
+            ate,
+            totalIngressosPagos: quebra.reduce((soma, d) => soma + d.ingressosPagos, 0),
+            porDia: quebra,
+          });
         } catch (e: any) {
-          const motivo =
-            e instanceof EscopoError
-              ? `${e.message} (escopo \`pedido:cancelar\`)`
-              : (e?.message ?? String(e));
-          return { content: [{ type: "text" as const, text: `Erro: ${motivo}` }], isError: true };
+          return falha(e, "vendas:read");
         }
+      },
+    );
+
+    server.registerTool(
+      "guedder_lotes_esgotados",
+      {
+        title: "Lotes esgotados",
+        description:
+          "Lista os lotes ATIVOS de um evento que já venderam todo o estoque. Lote desativado não conta como esgotado. " +
+          "Exige o escopo vendas:read e permissão sobre o evento.",
+        inputSchema: { eventoId: UUID_ },
+        outputSchema: TOOL_OUTPUT_SCHEMA,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      },
+      async (args: any) => {
+        try {
+          const eventoId = String(args?.eventoId ?? "");
+          portaoDeEscopo("guedder_lotes_esgotados", "vendas:read", caller, eventoId);
+          const lotes = await listarLotes(eventoId, caller);
+          // Conta própria em vez de `estoqueDisponivel`: a API devolve 0 ali para
+          // lote INATIVO, e todo lote desligado apareceria como esgotado.
+          // Sem `estoqueInicial` não dá para dizer que esgotou: ausente não é zero.
+          const esgotados = lotes
+            .filter((l) => (l?.enabled ?? l?.ativo) !== false)
+            .filter((l) => typeof l?.estoqueInicial === "number")
+            .filter((l) => l.estoqueInicial - Number(l?.ingressosVendidos ?? 0) <= 0)
+            .map((l) => ({ id: l.id, nome: l.nome, estoqueInicial: l.estoqueInicial, ingressosVendidos: l.ingressosVendidos ?? 0 }));
+          return ok({ eventoId, totalLotes: lotes.length, esgotados });
+        } catch (e: any) {
+          return falha(e, "vendas:read");
+        }
+      },
+    );
+
+    server.registerTool(
+      "guedder_criar_lote",
+      {
+        title: "Criar lote",
+        description:
+          "Cria um lote de ingressos num evento. `estoqueInicial` é o total de ingressos do lote (o \"limite de retiradas\"). " +
+          "Datas com offset explícito, ex.: 2026-11-01T20:00:00-03:00. " +
+          "Chame PRIMEIRO sem `confirmacao` para receber o resumo e o código; mostre o resumo à pessoa e só chame de novo, " +
+          "com os mesmos argumentos e o código, depois que ela confirmar. Exige o escopo lote:write.",
+        inputSchema: {
+          eventoId: UUID_,
+          nome: z.string().trim().min(1).describe("Nome do lote, único no evento"),
+          estoqueInicial: z.number().int().positive().describe("Quantidade de ingressos do lote"),
+          precoUnitario: z.number().nonnegative().default(0).describe("Preço por ingresso, em reais. Padrão 0 (gratuito)"),
+          inicioVendas: DATA_COM_OFFSET,
+          terminoVendas: DATA_COM_OFFSET,
+          privado: z.boolean().default(false).describe("Lote privado só aparece para quem tem o link/código"),
+          compraMaxima: z.number().int().positive().optional().describe("Máximo de ingressos por compra"),
+          confirmacao: z.string().optional().describe("Código devolvido pela chamada anterior. Sem ele, nada é criado."),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      },
+      async (args: any) => {
+        const a = args ?? {};
+        const eventoId = String(a.eventoId ?? "");
+        return executarEscrita({
+          tool: "guedder_criar_lote",
+          escopo: "lote:write",
+          alvo: eventoId,
+          eventoId,
+          args: a,
+          caller,
+          preparar: async () => ({
+            resumo: [
+              `Vou criar o lote "${a.nome}" no evento ${eventoId}:`,
+              `- ${a.estoqueInicial} ingressos (é o limite de vendas/retiradas do lote);`,
+              `- preço: ${a.precoUnitario > 0 ? `${brl(a.precoUnitario)} por ingresso` : "gratuito"};`,
+              `- vendas de ${a.inicioVendas} até ${a.terminoVendas};`,
+              `- ${a.privado ? "privado (só aparece para quem tem o link do lote)" : "público"};`,
+              `- compra máxima: ${a.compraMaxima ? `${a.compraMaxima} por compra` : "sem limite por compra"}.`,
+              "O lote já nasce ativo.",
+            ].join("\n"),
+            executar: () =>
+              apiPost(`/api/v1/lote/${enc(eventoId)}/adicionar`, {
+                caller,
+                // Defaults do LoteDto mandados explícitos: no Jackson 3, campo
+                // omitido vira null em vez de pegar o default do DTO, e estoura
+                // coluna NOT NULL.
+                body: {
+                  nome: a.nome,
+                  estoqueInicial: a.estoqueInicial,
+                  precoUnitario: a.precoUnitario,
+                  inicioVendas: a.inicioVendas,
+                  terminoVendas: a.terminoVendas,
+                  privado: a.privado,
+                  enabled: true,
+                  ativo: true,
+                  compraMinima: 1,
+                  compraMaxima: a.compraMaxima,
+                  limitarPorCpf: false,
+                  aplicavelEmTodosOsSetores: true,
+                  usoDeCupomObrigatorio: false,
+                  ocultarValor: false,
+                  taxaAmortecidaPeloProdutor: false,
+                  selfCheckinHabilitado: false,
+                  setores: [],
+                  janelasCheckin: [],
+                },
+              }),
+          }),
+          traduzirErro: (e) =>
+            e.status === 400 && /já existe um lote/i.test(e.corpo)
+              ? `Já existe um lote chamado "${a.nome}" neste evento. Escolha outro nome; nada foi criado.`
+              : undefined,
+        });
+      },
+    );
+
+    server.registerTool(
+      "guedder_criar_cupom",
+      {
+        title: "Criar cupom de desconto",
+        description:
+          "Cria um cupom de desconto num evento, para lotes escolhidos pelo NOME ou para todos os lotes (lista vazia). " +
+          "PERCENTUAL vai de 0 a 100; VALOR é em reais. " +
+          "Chame PRIMEIRO sem `confirmacao` para receber o resumo e o código; mostre o resumo à pessoa e só chame de novo, " +
+          "com os mesmos argumentos e o código, depois que ela confirmar. Exige o escopo cupom:write.",
+        inputSchema: {
+          eventoId: UUID_,
+          nome: z.string().trim().min(1).describe("Código do cupom que o comprador digita, único no evento"),
+          tipoDesconto: z.enum(["PERCENTUAL", "VALOR"]),
+          valorDesconto: z.number().positive().describe("Percentual (0 a 100) ou valor em reais"),
+          limite: z.number().int().positive().optional().describe("Total de usos do cupom. Ausente = sem limite"),
+          lotes: z.array(z.string().trim().min(1)).optional().describe("Nomes dos lotes. Vazio ou ausente = todos os lotes"),
+          confirmacao: z.string().optional().describe("Código devolvido pela chamada anterior. Sem ele, nada é criado."),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      },
+      async (args: any) => {
+        const a = args ?? {};
+        const eventoId = String(a.eventoId ?? "");
+        return executarEscrita({
+          tool: "guedder_criar_cupom",
+          escopo: "cupom:write",
+          alvo: eventoId,
+          eventoId,
+          args: a,
+          caller,
+          preparar: async () => {
+            if (a.tipoDesconto === "PERCENTUAL" && a.valorDesconto > 100) {
+              throw new Error("Desconto percentual vai de 0 a 100. Nada foi criado.");
+            }
+            const nomes: string[] = a.lotes ?? [];
+            const lotes = nomes.length ? await resolverLotes(eventoId, nomes, caller) : [];
+            return {
+              resumo: [
+                `Vou criar o cupom "${a.nome}" no evento ${eventoId}:`,
+                `- desconto: ${a.tipoDesconto === "PERCENTUAL" ? `${a.valorDesconto}%` : brl(a.valorDesconto)};`,
+                `- vale para: ${lotes.length ? lotes.map((l) => `"${l.nome}" (id ${l.id})`).join(", ") : "todos os lotes do evento"};`,
+                `- limite: ${a.limite ? `${a.limite} usos no total` : "sem limite de usos"};`,
+                "- cada pessoa usa o cupom em uma compra, e o desconto vale para um ingresso por compra (o mais caro).",
+                "O cupom já nasce ativo.",
+              ].join("\n"),
+              amarra: lotes,
+              executar: () =>
+                apiPost(`/api/v1/cupom/${enc(eventoId)}`, {
+                  caller,
+                  body: {
+                    nome: a.nome,
+                    tipoDesconto: a.tipoDesconto,
+                    valorDesconto: a.valorDesconto,
+                    limite: a.limite,
+                    lotes: lotes.map((l) => ({ id: l.id, nome: l.nome })),
+                    // Explícito: a API já trata lista vazia como "todos", mas
+                    // por um caminho (carrega os lotes de hoje) que congela a
+                    // lista. Com a flag, vale também para lote criado depois.
+                    aplicavelEmTodosOsLotes: lotes.length === 0,
+                    ativo: true,
+                    // Defaults do CupomDto, explícitos pelo mesmo motivo do lote.
+                    limitarUmaCompraPorUsuario: true,
+                    limitarUmIngressoPorCompra: true,
+                  },
+                }),
+            };
+          },
+          traduzirErro: (e) =>
+            e.status === 409
+              ? `Já existe um cupom chamado "${a.nome}" neste evento. Escolha outro nome; nada foi criado.`
+              : undefined,
+        });
       },
     );
   }
@@ -820,23 +1308,15 @@ function createMcpServer(caller?: Caller): McpServer {
               motivo:
                 "Nenhuma linha de log com esse identificador na janela consultada. Confirme o id, ou informe o trace_id diretamente.",
             };
-            return {
-              structuredContent: { result: data },
-              content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-            };
+            return ok(data);
           }
 
           const linhas = await auditoria.linhasDoTrace(traceId, args?.max_linhas);
-          const data = { encontrado: true, trace_id: traceId, linhas };
-          return {
-            structuredContent: { result: data },
-            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-          };
+          // `message` de log é texto livre e pode ter e-mail de comprador: a
+          // allowlist de campos de auditoria.ts não basta, a redação também passa.
+          return ok({ encontrado: true, trace_id: traceId, linhas });
         } catch (e: any) {
-          return {
-            content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }],
-            isError: true,
-          };
+          return falha(e);
         }
       },
     );
@@ -1140,6 +1620,11 @@ const TEXTO_DO_ESCOPO: Record<string, string> = {
   "conta:read": "Ver seus ingressos, suas compras e seus dados de perfil",
   "pedido:cancelar":
     "Cancelar pedidos seus, o que devolve o valor pelo mesmo meio de pagamento. O agente vai pedir sua confirmação antes de cada cancelamento",
+  "vendas:read": "Ver vendas dos eventos que você gerencia: ingressos vendidos por período e lotes esgotados",
+  "lote:write":
+    "Criar lotes de ingresso nos eventos que você gerencia. O agente vai pedir sua confirmação antes de cada criação",
+  "cupom:write":
+    "Criar cupons de desconto nos eventos que você gerencia. O agente vai pedir sua confirmação antes de cada criação",
 };
 
 /**
@@ -1166,18 +1651,10 @@ const TEXTO_DO_ESCOPO: Record<string, string> = {
  * aqui.
  */
 function provaDeConsent(pedido: URLSearchParams, deslocamento = 0): string {
-  const bloco = Math.floor(Date.now() / 600_000) - deslocamento;
-  return createHmac("sha256", SEGREDO_DE_CONFIRMACAO)
-    .update(
-      [
-        pedido.get("client_id") ?? "",
-        pedido.get("redirect_uri") ?? "",
-        pedido.get("state") ?? "",
-        pedido.get("code_challenge") ?? "",
-        bloco,
-      ].join("\n"),
-    )
-    .digest("base64url");
+  return hmacDeConsent(
+    ["client_id", "redirect_uri", "state", "code_challenge"].map((k) => pedido.get(k) ?? ""),
+    deslocamento,
+  );
 }
 
 function consentiuDeVerdade(pedido: URLSearchParams): boolean {

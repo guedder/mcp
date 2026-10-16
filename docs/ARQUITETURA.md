@@ -128,13 +128,14 @@ para smoke e cliente local legado, não para testar autenticação.
 | `GUEDDER_MCP_HOST` | `127.0.0.1` | **Em contêiner tem que ser `0.0.0.0`.** O padrão em Fargate dá health check eternamente vermelho sem nenhum erro no log. |
 | `GUEDDER_MCP_PORT` | `3000` | Porta validada no boot (1..65535). |
 | `GUEDDER_MCP_PATH` | `/mcp` | Caminho do endpoint MCP. |
-| `GUEDDER_MCP_PUBLIC_ONLY` | vazio | `1`/`true` registra **somente** as tools sem auth (7 tools de evento). Some a tool de escrita e a de auditoria. |
+| `GUEDDER_MCP_PUBLIC_ONLY` | vazio | `1`/`true` registra **somente** as tools sem auth (3 tools de evento). Somem as tools de escrita, de gestão de evento e a de auditoria. |
 | `GUEDDER_BEARER_TOKEN` | vazio | Token estático repassado à API quando não há `caller`. Só stdio local e smoke. |
 | `GUEDDER_COGNITO_ISSUER` | vazio | **Chave de liga/desliga da autenticação.** Vazio: `src/auth.ts` fica inerte. Definido: todo request no caminho MCP exige JWT válido. |
 | `GUEDDER_MCP_CLIENT_ID` | vazio | `client_id` esperado no token. Token de outro app client é recusado. |
 | `GUEDDER_MCP_RESOURCE` | `https://mcp.guedder.com/mcp` | **Audiência.** Identificador do resource server, igual em staging e produção. É endereço, não ambiente. |
 | `GUEDDER_MCP_PUBLIC_URL` | origem do `RESOURCE` | **Onde o servidor responde de verdade.** Só a metadata usa. |
 | `GUEDDER_MCP_SCOPES` | `openid email profile` | Escopos que o app client permite, com os customizados em nome **completo** (prefixado pelo resource). Espelha `allowed_oauth_scopes` do Terraform. |
+| `GUEDDER_MCP_CONFIRM_SECRET` | aleatório por processo | Segredo dos HMACs (código de confirmação das escritas e prova de consent). **Obrigatório com mais de uma réplica**, igual em todas: senão a fase 2 de uma escrita cai noutra task e o código não confere. Em prod, env injetada do Secrets Manager. |
 | `GUEDDER_MCP_LOG_GROUPS` | vazio | Log groups da tool de auditoria, separados por vírgula. Vazio: a tool não é registrada. |
 | `GUEDDER_MCP_MAX_LINHAS` | `100` | Teto de linhas por consulta de log. |
 | `GUEDDER_MCP_JANELA_DIAS` | `30` | Janela do scan da âncora. Não é filtro do usuário: é limite de varredura. |
@@ -426,7 +427,11 @@ para o porquê de não ser reforma de `guedder_minhas_compras`).
 | `guedder_listar_resumo_repasses_eventos` | ✅ ADMIN | `GET /api/v3/administrativo/repasses/eventos` |
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
 | `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/perfil` |
+| `guedder_ingressos_vendidos_periodo` | ✅ `vendas:read` | Pagina `GET /api/v1/metrica/{id}/ultimas-vendas?sort=viewId.dataCompra,desc` e soma `ingressosPagos` por dia (≤ 31 dias, America/Sao_Paulo; dia sem linha = 0) |
+| `guedder_lotes_esgotados` | ✅ `vendas:read` | Pagina `GET /api/v1/lote/{id}`; esgotado = `enabled && estoqueInicial - ingressosVendidos <= 0` |
 | `guedder_cancelar_pedido` | ✅ `pedido:cancelar` | `POST /api/v3/pedidos/{id}/cancelamento` |
+| `guedder_criar_lote` | ✅ `lote:write` | `POST /api/v1/lote/{id}/adicionar` |
+| `guedder_criar_cupom` | ✅ `cupom:write` | `POST /api/v1/cupom/{id}`; nomes de lote → ids via `GET /api/v1/lote/{id}` |
 | `guedder_rastrear_compra` | ✅ ADMIN, sem API | CloudWatch Logs Insights |
 
 Armadilhas de rota já pagas, que se repetem em qualquer reimplementação:
@@ -438,6 +443,14 @@ Armadilhas de rota já pagas, que se repetem em qualquer reimplementação:
   `PUT /api/v1/ingresso/{id}/cancelar` devolve 400 fora de convite e não checa
   dono. A operação real é cancelar o **pedido**
   (`POST /api/v3/pedidos/{id}/cancelamento`), que já é só-do-dono.
+- **Lote, cupom e vendas são v1.** Os equivalentes v3 existem no `api.yaml` mas
+  respondem 501. O envelope v1 de métrica é `RestObject`
+  (`{code, data, page}`); o de lote é `Page` do Spring em modo `VIA_DTO`
+  (`{content, page: {totalPages}}`); criar lote/cupom devolve o DTO cru.
+- **`estoqueDisponivel` vem 0 em lote inativo.** Usá-lo para "esgotado" listaria
+  todo lote desligado; a conta é `estoqueInicial - ingressosVendidos`.
+- **Campo omitido no body vira `null` no Jackson 3**, em vez do default do DTO,
+  e estoura `NOT NULL`. Criar lote/cupom mandam os defaults explícitos.
 
 ### O bloco `instructions` do handshake
 
@@ -454,49 +467,110 @@ são registradas (não é filtro em runtime: elas não existem no handshake).
 
 ---
 
-## 9. A tool de escrita
+## 9. As tools de escrita
 
-`guedder_cancelar_pedido` é a única operação que muda estado. **Três portões em
-série**, cada um respondendo uma pergunta diferente:
+`guedder_cancelar_pedido`, `guedder_criar_lote` e `guedder_criar_cupom` são as
+únicas operações que mudam estado, e todas passam por `executarEscrita`
+(`src/index.ts`). **Três portões em série**, cada um respondendo uma pergunta
+diferente:
 
 | portão | pergunta | onde |
 |---|---|---|
-| escopo | a pessoa autorizou o **agente** a isto? | `exigirEscopo`, neste servidor |
-| confirmação | ela mandou fazer **isto**, neste pedido, agora? | duas fases, neste servidor |
-| regra de negócio | ela **pode**? (dono, prazo, check-in) | a API, que continua a autoridade |
+| escopo | a pessoa autorizou o **agente** a isto? | `portaoDeEscopo` → `exigirEscopo`, neste servidor |
+| confirmação | ela mandou fazer **isto**, com estes argumentos, agora? | duas fases, neste servidor |
+| regra de negócio e permissão | ela **pode**? (dono, gerente do evento, prazo, nome único) | a API, que continua a autoridade |
 
 **Duas fases, porque o agente é um LLM.** A primeira chamada (sem
-`confirmacao`) não escreve nada: devolve o resumo do efeito em português e um
-código. A segunda, com aquele código, executa. O código é
-`HMAC(pedidoId + usuário)` truncado em 10 caracteres alfanuméricos maiúsculos,
-**imprevisível de propósito**: se fosse fixo ("CONFIRMAR"), o modelo poderia
-mandá-lo de primeira e a fase de resumo nunca chegaria à pessoa — que é
-justamente o que faz o consent valer alguma coisa numa operação que devolve
-dinheiro. Um código vale para **um** pedido: sem isso a pessoa confirma o
-cancelamento de um ingresso e o agente reaproveita o código em outro.
+`confirmacao`) não escreve nada: devolve o resumo do efeito em português (com
+nomes de lote já resolvidos, no cupom) e um código. A segunda, com aquele código
+e **os mesmos argumentos**, executa. O código (`src/escrita.ts`) é
+
+```
+HMAC-SHA256(chave_confirmacao, JSON[op, alvo, JSON canônico dos args, usuário, bloco de 10 min])
+```
+
+truncado em 10 caracteres `[A-Z0-9]`, comparado com `timingSafeEqual`, válido no
+bloco atual e no anterior (10 a 20 minutos). **Imprevisível de propósito**: se
+fosse fixo ("CONFIRMAR"), o modelo poderia mandá-lo de primeira e a fase de
+resumo nunca chegaria à pessoa. Os **argumentos** entram no HMAC porque, sem
+eles, o código do "lote de 100 a R$ 10" confirmaria o "lote de 10.000 a R$ 0" no
+mesmo evento. JSON canônico (chaves ordenadas) para a ordem não importar.
+O que `preparar` resolve e a pessoa vê no resumo também entra (`amarra`): no
+cupom, os pares `{id, nome}` dos lotes, para que recriar um lote com o mesmo nome
+entre as fases invalide o código. Código fora de `^[A-Z0-9]{10}$` é recusado
+antes do `timingSafeEqual` (que lança com buffers de tamanhos diferentes, e um
+código não-ASCII tem mais bytes que caracteres).
+
+`preparar` roda nas duas fases e é onde mora toda recusa local (data sem offset,
+percentual > 100, nome de lote que não resolve para exatamente um lote): erro ali
+não escreve nada em nenhuma fase, e é auditado como `fase: "recusado"`.
+
+**Id que vira path é validado no schema**: `z.string().uuid()` onde a API pede
+UUID; `^[A-Za-z0-9_-]{1,64}$` onde aceita código ou idPedido.
+`encodeURIComponent` não codifica `.`, e `eventoId=".."` viraria outro endpoint
+depois da normalização da URL. Datas são conferidas no calendário (2026-02-30 é
+recusado, não rola para março).
 
 Código errado é `isError`; código ausente **não** é erro (é a fase de resumo).
 
-**Sem `outputSchema`**, de propósito: a tool devolve duas coisas diferentes (o
-resumo da fase 1 e a resposta da API na fase 2), e declarar o schema da segunda
-obrigaria a primeira a fingir ser um resultado de API.
+**Sem `outputSchema`** nas escritas, de propósito: devolvem duas coisas
+diferentes (o resumo da fase 1 e a resposta da API na fase 2).
 
-**Annotations dizem a verdade**: `readOnlyHint: false`,
-`destructiveHint: true`, `idempotentHint: false` (cancelar duas vezes não é o
-mesmo que cancelar uma: a segunda tende a bater num pedido que já não está PAGO
-e voltar erro). O cliente MCP usa essas dicas para decidir se pede aprovação
-humana.
+**Annotations dizem a verdade.** Cancelar: `destructiveHint: true`. Criar lote e
+cupom: `destructiveHint: false` (somam, não apagam). Todas `readOnlyHint: false`
+e `idempotentHint: false` — duas chamadas criam dois lotes, ou batem no nome
+duplicado.
 
-**Sem helper genérico de verbo.** Existe `apiGet` e existe `apiPost`, e o
-segundo só serve a esta operação. Um `apiRequest(metodo, path)` transformaria
-"este servidor escreve num lugar" em "este servidor pode escrever em qualquer
-lugar", e a diferença só apareceria numa auditoria (ADR 0003).
+**Sem helper genérico de verbo.** Existe `apiGet` e existe `apiPost(path,
+{ caller, body? })`, chamado só de dentro de `executarEscrita`. Um
+`apiRequest(metodo, path)` transformaria "este servidor escreve em três lugares"
+em "este servidor pode escrever em qualquer lugar" (ADR 0003). O `body` opcional
+evitou um segundo helper de POST.
 
-**O segredo dos HMACs é por processo** (`randomBytes(32)` no boot), e o mesmo
-segredo serve ao código de confirmação e à prova de consent. Com mais de uma
-réplica, a confirmação pode cair noutra e a pessoa confirma de novo — atrito
-aceitável. Se incomodar, o upgrade é uma chave em SSM lida no boot, não uma
-sessão em banco.
+**O segredo** vem de `GUEDDER_MCP_CONFIRM_SECRET` (Secrets Manager → env da
+task); sem ele, `randomBytes(32)` no boot, que só serve a um processo (stdio,
+dev). Com N réplicas o segredo **tem** que ser compartilhado, senão a fase 2 cai
+noutra task e o código não confere. O mesmo segredo alimenta a prova de consent, mas **cada uma usa uma chave derivada própria** (`guedder-mcp/confirmacao/v1`, `guedder-mcp/consent/v1`): com a mesma chave, a tela de consent, que é pública, devolvia em `consentido` o HMAC que a escrita espera, bastando pôr op/alvo/args/usuário nos quatro campos do pedido. O material vai em JSON, não em `join("\n")`, para quebra de linha num campo não deslocar os outros.
+
+### Auditoria das escritas e das negações
+
+Uma linha JSON por evento, no **stderr** (no stdio o stdout é o canal JSON-RPC;
+o awslogs da task captura os dois):
+
+```json
+{"audit":true,"ts":"…","tool":"guedder_criar_lote","fase":"resumo|execucao|codigo_invalido|negado|recusado",
+ "escopo":"lote:write","usuario":"<usuarioId|email>","eventoId":"…","alvo":"…","argsHash":"<16 hex>","resultado":"ok|erro 400"}
+```
+
+Fase 1 e fase 2 de toda escrita, código inválido, e **toda negação de escopo**
+de qualquer tool (com `eventoId` quando a tool o recebe) — o PRD de consent por
+evento mede "chamada fora do consentido" por essas linhas. Args crus não entram,
+só o hash. Filtro no CloudWatch: `{ $.audit IS TRUE }`.
+
+### Redação de dado pessoal (GUE-484)
+
+`redigir()` roda na saída de **todas** as tools (`ok()` em `src/index.ts`).
+`CHAVES_SENSIVEIS` em `src/escrita.ts` é a lista única (CPF, e-mail, telefone,
+nome/foto do portador, código de ingresso, cartão); tool nova herda sem fazer
+nada. `codigo` é redigido **por padrão**: só fica visível em objeto de lote
+(`estoqueInicial`) ou evento (`dataInicio`) sem marcador de ingresso
+(`ingressoId`, `idPedido`, `nomePortador`, `checkIn`). `nome` também é redigido em ingresso, e `nome`/`fotoUrl`
+em objeto com cara de pessoa (`sobrenome`, `dataNascimento`, `cpf`,
+`compradorId`, como o perfil de `guedder_usuario_logado`); em lote, evento e
+atração continuam visíveis. Texto livre (corpo de erro
+da API, `message` de log) passa por `mascararTexto` (e-mail e CPF pontuado), e o
+corpo de erro é truncado em 300 caracteres. O teste "nenhuma
+tool devolve dado pessoal" (`mvp.test.mjs`) passa todas as tools por uma API que
+devolve PII em todo canto.
+
+### Erro de API acionável
+
+`ApiError` guarda `status` e corpo; 401 (reconectar), 403 (sem permissão no
+evento) e 429 (limite de 30 req/10 s por usuário; esperar) viram instrução em vez
+de erro cru. O prefixo `<VERBO> <path> -> <status>` é contrato
+(`guedder_detalhes_evento` reconhece o 404 de `parametros-venda` por ele). Todo
+fetch tem `AbortSignal.timeout(15 s)`. Paginação interna usa `size=100` com teto
+de 20 páginas, para uma tool não queimar o rate limit da pessoa.
 
 ---
 
@@ -584,6 +658,8 @@ servidor de verdade (stdio ou HTTP) contra uma API ou um Cognito de mentira.
 |---|---|
 | `spec-paths.test.mjs` | Cada tool de leitura chama **o path e os query params da sua operação OpenAPI**, com exatamente **um GET**. Afirma o **verbo**, e tem uma lista nomeada de exceções (`guedder_rastrear_compra`, `guedder_cancelar_pedido`). Somar tool de escrita sem entrar na lista quebra o teste **de propósito**: é o que transforma "ampliar a superfície" em decisão revisada. |
 | `escrita.test.mjs` | Fase de resumo não escreve; confirmação errada não cancela; código de um pedido não serve para outro; a tool se anuncia destrutiva. |
+| `escrita-base.test.mjs` | O código muda com op, alvo, cada argumento e pessoa; ordem das chaves não importa; bloco anterior vale, o de antes não; `redigir` mascara em profundidade e só mascara `codigo` de ingresso. |
+| `mvp.test.mjs` | Vendas por período (soma, dia sem linha, teto de 31 dias); esgotados (lote inativo, paginação); criar lote/cupom (resumo sem POST, arg alterado invalida, 1 POST com o body esperado, lote inexistente = 0 POST, data sem offset, duplicado, percentual > 100); 429 acionável; **nenhuma tool devolve dado pessoal**. |
 | `consent.test.mjs` | `/authorize` sem prova mostra a tela; o redirect leva só o marcado; escopo forjado na query não passa; `consentido=1` não vale; a prova de um pedido não serve para outro `redirect_uri`. |
 | `auth.test.mjs` | JWKS, client_id, issuer, `aud`, email ausente, prefixo de escopo, `exigirEscopo`, **admin não fura escopo**, metadata, correções do documento do Cognito, cache de endpoints, `publicUrl` independente da audiência. |
 | `auditoria.test.mjs` | Allowlist de campos, filtro exato por trace, teto de linhas, recusa de curinga no identificador, falha alta quando o CloudWatch falha. |
@@ -614,7 +690,9 @@ recriado: voltaria a exigir três peças novas para entregar a mesma imagem.
   configurada", não apenas "processo morto".
 - Role da task só com as permissões da auditoria (seção 10).
 - Cognito: `aws_cognito_resource_server` `https://mcp.guedder.com/mcp` com
-  `conta:read` e `pedido:cancelar` (mínimo deliberado: escopo declarado sem
+  `conta:read` e `pedido:cancelar` (mais `vendas:read`, `lote:write` e
+  `cupom:write`, que este repo já exige mas o resource server ainda precisa
+  ganhar — repo `infra`; mínimo deliberado: escopo declarado sem
   consumidor é permissão concedida e esquecida; somar é barato, tirar é caro
   porque token em circulação segue valendo). App client `guedder-mcp-agent`,
   público (PKCE, sem secret), TTL curto (access 1h, refresh 1d) porque o token
@@ -677,8 +755,16 @@ seguinte.
   audiência já está escolhida, o resto não.
 - **Despertar do staging.** Um cliente MCP não consegue acordar o serviço
   adormecido. Só se paga se o MCP passar a ser usado sem ninguém no front.
-- **Segredo dos HMACs por processo.** Com mais de uma réplica, a confirmação
-  pode cair noutra.
+- **Segredo dos HMACs em prod.** Resolvido em código
+  (`GUEDDER_MCP_CONFIRM_SECRET`); falta o segredo no Secrets Manager e a env na
+  task, no root Terraform de prod.
+- **Consent central por evento** (PRD `oauth-consent-escopos-por-evento`). A
+  tela daqui só ganhou os textos dos três escopos novos e vai ser substituída;
+  hoje o escopo vale para todos os eventos que a pessoa alcança, e quem recorta
+  por evento é a permissão da API.
+- **Escopo nas leituras de venda antigas.** `guedder_auditar_vendas_evento` e
+  `guedder_resumo_vendas_evento` continuam sem `vendas:read`: exigir agora
+  quebraria quem já conectou sem ele. Ligar junto com o consent central.
 - **Client confidencial e sessão emitida aqui.** É o que fecha os dois tetos da
   tela de consent; gatilho é cliente de terceiro de fato não confiável.
 - **Escopos vs tools de staff/admin.** `conta:read` e `pedido:cancelar` são
