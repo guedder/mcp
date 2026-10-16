@@ -37,12 +37,13 @@ test("redigir mascara dado pessoal em qualquer profundidade", () => {
   const r = redigir({
     data: {
       vendas: [{ comprador: { cpf: "111", Email: "x@y.z", telefone: "11", nomePortador: "Fulano" } }],
+      checkin: [{ nomeParticipante: "Beltrano", fotoComprador: "https://s3/foto.jpg" }],
       pagamento: { numeroCartao: "4111", cvv: "123" },
     },
     nulo: { cpf: null },
   });
   const texto = JSON.stringify(r);
-  for (const segredo of ["111", "x@y.z", "Fulano", "4111", "123"]) {
+  for (const segredo of ["111", "x@y.z", "Fulano", "Beltrano", "s3/foto", "4111", "123"]) {
     assert.doesNotMatch(texto, new RegExp(segredo.replace(".", "\\.")), `${segredo} vazou`);
   }
   assert.equal(r.nulo.cpf, null, "null continua null: redigido sugeriria que havia valor");

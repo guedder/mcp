@@ -394,6 +394,12 @@ const TETO_PAGINAS = 20;
 
 const hojeEmSaoPaulo = () => new Intl.DateTimeFormat("en-CA", { timeZone: FUSO }).format(new Date());
 
+const DIA_MS = 86_400_000;
+
+/** Conta os dias antes de montar a lista: 0000-01-01..9999-12-31 não pode alocar milhões de strings. */
+const quantosDias = (de: string, ate: string) =>
+  Math.floor((Date.parse(`${ate}T00:00:00Z`) - Date.parse(`${de}T00:00:00Z`)) / DIA_MS) + 1;
+
 function diasDoPeriodo(de: string, ate: string): string[] {
   const dias: string[] = [];
   for (let d = new Date(`${de}T00:00:00Z`); d <= new Date(`${ate}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
@@ -1031,11 +1037,12 @@ function createMcpServer(caller?: Caller): McpServer {
           portaoDeEscopo("guedder_ingressos_vendidos_periodo", "vendas:read", caller, eventoId);
           const ate: string = args?.ate ?? hojeEmSaoPaulo();
           const de: string = args?.de ?? ate;
-          const dias = diasDoPeriodo(de, ate);
-          if (dias.length === 0) throw new Error(`Período inválido: ${de} é depois de ${ate}.`);
-          if (dias.length > MAX_DIAS_PERIODO) {
-            throw new Error(`Período de ${dias.length} dias; o máximo é ${MAX_DIAS_PERIODO}. Divida em consultas menores.`);
+          const n = quantosDias(de, ate);
+          if (n <= 0) throw new Error(`Período inválido: ${de} é depois de ${ate}.`);
+          if (n > MAX_DIAS_PERIODO) {
+            throw new Error(`Período de ${n} dias; o máximo é ${MAX_DIAS_PERIODO}. Divida em consultas menores.`);
           }
+          const dias = diasDoPeriodo(de, ate);
           const { nomeEvento, porDia } = await vendasPorDia(eventoId, de, caller);
           const quebra = dias.map((data) => ({ data, ingressosPagos: porDia.get(data) ?? 0 }));
           return ok({

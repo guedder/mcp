@@ -108,6 +108,24 @@ test("vendidos no período soma por dia e põe 0 no dia sem linha", async () => 
   );
 });
 
+test("período extremo recusa pela contagem, sem montar os dias", async () => {
+  await comApiFalsa(
+    () => ({}),
+    async (client, recebidos) => {
+      const inicio = Date.now();
+      const r = await chamar(client, "guedder_ingressos_vendidos_periodo", {
+        eventoId: EVENTO,
+        de: "0001-01-01",
+        ate: "9999-12-31",
+      });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /máximo é 31/);
+      assert.equal(recebidos.length, 0);
+      assert.ok(Date.now() - inicio < 1000, "não pode iterar milhões de dias");
+    },
+  );
+});
+
 test("período acima de 31 dias recusa sem chamar a API", async () => {
   await comApiFalsa(
     () => ({}),

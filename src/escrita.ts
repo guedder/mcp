@@ -129,6 +129,8 @@ export const CHAVES_SENSIVEIS = new Set(
     "celular",
     "nomePortador",
     "fotoPortador",
+    "nomeParticipante",
+    "fotoComprador",
     "codigoIngresso",
     "codigoIngressoPortador",
     "numeroCartao",
