@@ -69,7 +69,13 @@ export function codigoDeConfirmacao(
     .slice(0, 10);
 }
 
-/** Bloco atual e o anterior: a pessoa pode levar uns minutos lendo o resumo. */
+/**
+ * Bloco atual e o anterior: a pessoa pode levar uns minutos lendo o resumo.
+ *
+ * O formato é conferido ANTES do `timingSafeEqual`: ele lança se os buffers
+ * tiverem tamanhos diferentes, e "ÁÁÁÁÁÁÁÁÁÁ" tem 10 caracteres mas 20 bytes em
+ * UTF-8. Sem esta linha, um código não-ASCII virava exceção em vez de recusa.
+ */
 export function confirmacaoConfere(
   codigo: unknown,
   op: string,
@@ -77,16 +83,16 @@ export function confirmacaoConfere(
   args: unknown,
   caller?: Caller,
 ): boolean {
-  if (typeof codigo !== "string") return false;
-  return [0, 1].some((d) => {
-    const esperado = codigoDeConfirmacao(op, alvo, args, caller, d);
-    return codigo.length === esperado.length && timingSafeEqual(Buffer.from(codigo), Buffer.from(esperado));
-  });
+  if (typeof codigo !== "string" || !/^[A-Z0-9]{10}$/.test(codigo)) return false;
+  return [0, 1].some((d) =>
+    timingSafeEqual(Buffer.from(codigo), Buffer.from(codigoDeConfirmacao(op, alvo, args, caller, d))),
+  );
 }
 
 export type EventoDeAuditoria = {
   tool: string;
-  fase: "resumo" | "execucao" | "codigo_invalido" | "negado";
+  /** `recusado` = a fase de preparo recusou (validação local, lote inexistente): nada foi escrito. */
+  fase: "resumo" | "execucao" | "codigo_invalido" | "negado" | "recusado";
   escopo?: string;
   usuario: string;
   eventoId?: string;
@@ -131,26 +137,49 @@ export const CHAVES_SENSIVEIS = new Set(
     "tokenCartao",
     "cvv",
     "cvc",
+    "chavePix",
   ].map((k) => k.toLowerCase()),
 );
 
 /**
  * `codigo` sozinho é ambíguo: em evento e lote é identificador público (a
  * pessoa digita na URL), em ingresso é a credencial de entrada no portão.
- * Só é mascarado no objeto que tem cara de ingresso.
+ *
+ * Por isso a regra é de negação por padrão: `codigo` só fica visível em objeto
+ * reconhecível como lote (`estoqueInicial`) ou evento (`dataInicio`), e nunca se
+ * o objeto tiver marcador de ingresso. Um ingresso de formato novo, sem marcador
+ * nenhum, sai redigido; o custo de errar para esse lado é um código de evento
+ * a menos na resposta, e o do outro lado é a entrada de alguém no portão.
  */
-const CARA_DE_INGRESSO = ["idPedido", "nomePortador"];
+const CARA_DE_LOTE_OU_EVENTO = ["estoqueInicial", "dataInicio"];
+const CARA_DE_INGRESSO = ["ingressoId", "idPedido", "nomePortador", "checkIn"];
+
+function codigoPublico(o: Record<string, unknown>): boolean {
+  return CARA_DE_LOTE_OU_EVENTO.some((k) => k in o) && !CARA_DE_INGRESSO.some((k) => k in o);
+}
+
+/**
+ * Dado pessoal em texto livre: corpo de erro da API, mensagem de log. Só os
+ * formatos inequívocos (e-mail, CPF pontuado): mascarar toda sequência de 11
+ * dígitos comeria id de pedido e trace_id.
+ */
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const CPF = /\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g;
+
+export function mascararTexto(s: string): string {
+  return s.replace(EMAIL, REDIGIDO).replace(CPF, REDIGIDO);
+}
 
 const REDIGIDO = "[redigido]";
 
 export function redigir<T>(valor: T): T {
+  if (typeof valor === "string") return mascararTexto(valor) as T;
   if (Array.isArray(valor)) return valor.map(redigir) as T;
   if (!valor || typeof valor !== "object") return valor;
   const o = valor as Record<string, unknown>;
-  const ingresso = CARA_DE_INGRESSO.some((k) => k in o);
   const saida: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) {
-    const sensivel = CHAVES_SENSIVEIS.has(k.toLowerCase()) || (ingresso && k === "codigo");
+    const sensivel = CHAVES_SENSIVEIS.has(k.toLowerCase()) || (k === "codigo" && !codigoPublico(o));
     saida[k] = sensivel && v !== null && v !== undefined ? REDIGIDO : redigir(v);
   }
   return saida as T;

@@ -16,6 +16,7 @@ const EVENTO = "11111111-1111-1111-1111-111111111111";
 
 async function comApiFalsa(roteador, fn) {
   const recebidos = [];
+  const auditoria = [];
   const server = http.createServer((req, res) => {
     let corpo = "";
     req.on("data", (c) => (corpo += c));
@@ -39,12 +40,15 @@ async function comApiFalsa(roteador, fn) {
       GUEDDER_API_BASE: `http://127.0.0.1:${port}`,
       GUEDDER_BEARER_TOKEN: "token-de-teste",
     },
-    stderr: "ignore",
+    stderr: "pipe",
+  });
+  transport.stderr.on("data", (c) => {
+    for (const linha of String(c).split("\n")) if (linha.startsWith('{"audit"')) auditoria.push(JSON.parse(linha));
   });
   const client = new Client({ name: "mvp-test", version: "0" });
   try {
     await client.connect(transport);
-    await fn(client, recebidos);
+    await fn(client, recebidos, auditoria);
   } finally {
     await client.close();
     await new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())));
@@ -398,6 +402,7 @@ function argsDeAmostra(schema) {
   for (const [nome, prop] of Object.entries(schema.properties ?? {})) {
     if (nome === "confirmacao") continue;
     if (prop.type === "integer" || prop.type === "number") out[nome] = 1;
+    else if (prop.format === "uuid") out[nome] = EVENTO;
     else if (prop.type === "array") out[nome] = ["amostra"];
     else out[nome] = "amostra";
   }
@@ -416,6 +421,138 @@ test("nenhuma tool devolve dado pessoal", async () => {
         const saida = JSON.stringify([r.content, r.structuredContent]);
         assert.doesNotMatch(saida, /SEGREDO/, `${tool.name} vazou dado pessoal`);
       }
+    },
+  );
+});
+
+// ── Correções do review do PR #19 ───────────────────────────────────────────
+
+test("confirmação não-ASCII é código inválido, auditado, e não escreve", async () => {
+  await comApiFalsa(
+    () => ({}),
+    async (client, recebidos, auditoria) => {
+      const r = await chamar(client, "guedder_cancelar_pedido", { pedidoId: "ped1", confirmacao: "ÁÁÁÁÁÁÁÁÁÁ" });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /Confirmação inválida/);
+      assert.equal(recebidos.length, 0);
+      await new Promise((ok) => setTimeout(ok, 50));
+      assert.ok(auditoria.some((l) => l.fase === "codigo_invalido" && l.tool === "guedder_cancelar_pedido"), JSON.stringify(auditoria));
+    },
+  );
+});
+
+test("id com '..' não vira segmento de path", async () => {
+  await comApiFalsa(
+    () => ({}),
+    async (client, recebidos) => {
+      const chamadas = [
+        ["guedder_lotes_esgotados", { eventoId: ".." }],
+        ["guedder_criar_lote", { ...LOTE, eventoId: ".." }],
+        ["guedder_criar_cupom", { ...CUPOM, eventoId: "../../v3/pedidos" }],
+        ["guedder_cancelar_pedido", { pedidoId: ".." }],
+        ["guedder_detalhes_evento", { eventoId: ".." }],
+        ["guedder_get_lote", { codigoOrEventoId: "..", codigoOrLoteId: "x" }],
+      ];
+      for (const [nome, args] of chamadas) {
+        const r = await chamar(client, nome, args);
+        assert.equal(r.isError, true, `${nome} aceitou ${JSON.stringify(args)}`);
+      }
+      assert.equal(recebidos.length, 0);
+    },
+  );
+});
+
+test("corpo de erro da API passa pela redação antes de chegar ao modelo", async () => {
+  await comApiFalsa(
+    ({ method }) =>
+      method === "POST"
+        ? { status: 400, body: { detail: "Falhou para fulano@x.com", comprador: { cpf: "SEGREDO-cpf", email: "SEGREDO-mail" } } }
+        : {},
+    async (client) => {
+      const codigo = codigoDe(await chamar(client, "guedder_criar_lote", LOTE));
+      const r = await chamar(client, "guedder_criar_lote", { ...LOTE, confirmacao: codigo });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /-> 400/);
+      assert.doesNotMatch(r.content[0].text, /SEGREDO|fulano@x\.com/);
+    },
+  );
+});
+
+test("cupom: lote recriado ou renomeado entre as fases não executa", async () => {
+  let lotes = [{ id: "l-pista", nome: "Pista", enabled: true, estoqueInicial: 10, ingressosVendidos: 0 }];
+  await comApiFalsa(
+    ({ method }) => (method === "POST" ? { status: 201, body: {} } : pagina(lotes)),
+    async (client, recebidos) => {
+      const resumo = await chamar(client, "guedder_criar_cupom", CUPOM);
+      assert.match(resumo.content[0].text, /l-pista/, "o resumo mostra o id que vai ser usado");
+      const codigo = codigoDe(resumo);
+
+      // Recriado: mesmo nome, outro id.
+      lotes = [{ ...lotes[0], id: "l-pista-novo" }];
+      const recriado = await chamar(client, "guedder_criar_cupom", { ...CUPOM, confirmacao: codigo });
+      assert.equal(recriado.isError, true);
+      assert.match(recriado.content[0].text, /Confirmação inválida/);
+
+      // Renomeado: o nome pedido deixa de existir.
+      lotes = [{ ...lotes[0], id: "l-pista", nome: "Pista VIP" }];
+      const renomeado = await chamar(client, "guedder_criar_cupom", { ...CUPOM, confirmacao: codigo });
+      assert.equal(renomeado.isError, true);
+
+      assert.equal(posts(recebidos).length, 0);
+    },
+  );
+});
+
+test("lote sem estoqueInicial não conta como esgotado", async () => {
+  await comApiFalsa(
+    () => pagina([{ id: "x", nome: "Sem estoque", enabled: true, ingressosVendidos: 0 }]),
+    async (client) => {
+      const r = await chamar(client, "guedder_lotes_esgotados", { eventoId: EVENTO });
+      assert.deepEqual(r.structuredContent.result.esgotados, []);
+    },
+  );
+});
+
+test("recusa na fase de preparo é auditada", async () => {
+  await comApiFalsa(
+    () => LOTES_DO_EVENTO,
+    async (client, recebidos, auditoria) => {
+      const r = await chamar(client, "guedder_criar_cupom", { ...CUPOM, lotes: ["Backstage"] });
+      assert.equal(r.isError, true);
+      await new Promise((ok) => setTimeout(ok, 50));
+      const linha = auditoria.find((l) => l.fase === "recusado");
+      assert.ok(linha, JSON.stringify(auditoria));
+      assert.equal(linha.tool, "guedder_criar_cupom");
+      assert.equal(linha.eventoId, EVENTO);
+      assert.equal(posts(recebidos).length, 0);
+    },
+  );
+});
+
+test("dia inexistente no calendário é recusado, não rola para outro dia", async () => {
+  await comApiFalsa(
+    () => ({}),
+    async (client, recebidos) => {
+      const periodo = await chamar(client, "guedder_ingressos_vendidos_periodo", { eventoId: EVENTO, de: "2026-02-30", ate: "2026-03-01" });
+      assert.equal(periodo.isError, true);
+      const lote = await chamar(client, "guedder_criar_lote", { ...LOTE, inicioVendas: "2026-02-30T10:00:00-03:00" });
+      assert.equal(lote.isError, true);
+      const hora = await chamar(client, "guedder_criar_lote", { ...LOTE, inicioVendas: "2026-11-01T25:00:00-03:00" });
+      assert.equal(hora.isError, true);
+      assert.equal(recebidos.length, 0);
+    },
+  );
+});
+
+test("histórico longo demais para no teto de páginas com mensagem clara", async () => {
+  const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+  await comApiFalsa(
+    () => ({ body: { data: { vendasList: [{ dataCompra: hoje, ingressosPagos: 1 }] }, page: { totalPages: 999 } } }),
+    async (client, recebidos) => {
+      const r = await chamar(client, "guedder_ingressos_vendidos_periodo", { eventoId: EVENTO, de: "2020-01-01", ate: "2020-01-02" });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /20 páginas/);
+      assert.equal(recebidos.length, 20);
     },
   );
 });

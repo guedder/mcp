@@ -31,7 +31,7 @@ import {
   type Caller,
 } from "./auth.js";
 import { auditoriaConfigFromEnv, criarAuditoria } from "./auditoria.js";
-import { SEGREDO, auditar, codigoDeConfirmacao, confirmacaoConfere, hashArgs, redigir, usuarioDe } from "./escrita.js";
+import { SEGREDO, auditar, codigoDeConfirmacao, confirmacaoConfere, hashArgs, mascararTexto, redigir, usuarioDe } from "./escrita.js";
 
 const BASE = (process.env.GUEDDER_API_BASE ?? "https://api.guedder.com").replace(/\/+$/, "");
 const BEARER_TOKEN = process.env.GUEDDER_BEARER_TOKEN?.trim();
@@ -80,8 +80,23 @@ class ApiError extends Error {
     statusText: string,
     readonly corpo: string,
   ) {
-    super(`${metodo} ${path} -> ${status} ${DICA_POR_STATUS[status] ?? `${statusText}${corpo ? `: ${corpo.slice(0, 500)}` : ""}`}`);
+    super(`${metodo} ${path} -> ${status} ${DICA_POR_STATUS[status] ?? `${statusText}${corpo ? `: ${corpoSeguro(corpo)}` : ""}`}`);
   }
+}
+
+/**
+ * Corpo de erro da API vai para o contexto do LLM via mensagem de erro, então
+ * passa pela mesma redação da saída de sucesso, e é truncado: corpo de erro do
+ * Spring pode trazer o DTO inteiro de volta.
+ */
+function corpoSeguro(corpo: string): string {
+  let texto: string;
+  try {
+    texto = JSON.stringify(redigir(JSON.parse(corpo)));
+  } catch {
+    texto = mascararTexto(corpo);
+  }
+  return texto.length > 300 ? `${texto.slice(0, 300)}…` : texto;
 }
 
 /**
@@ -174,7 +189,9 @@ function ok(data: unknown): Resposta {
 
 function falha(e: any, escopo?: string): Resposta {
   const motivo = e instanceof EscopoError && escopo ? `${e.message} (escopo \`${escopo}\`)` : (e?.message ?? String(e));
-  return { content: [{ type: "text" as const, text: `Erro: ${motivo}` }], isError: true };
+  // Toda saída passa pela redação, inclusive a de erro (o corpo da API já vem
+  // limpo em ApiError; isto cobre o resto).
+  return { content: [{ type: "text" as const, text: `Erro: ${mascararTexto(motivo)}` }], isError: true };
 }
 
 /**
@@ -192,7 +209,13 @@ async function executarEscrita(p: {
   eventoId?: string;
   args: Record<string, unknown>;
   caller?: Caller;
-  preparar: () => Promise<{ resumo: string; executar: () => Promise<unknown> }>;
+  /**
+   * `amarra`: o que `preparar` resolveu e precisa entrar no código além dos
+   * args (no cupom, os pares {id, nome} dos lotes). Sem isso, recriar um lote
+   * com o mesmo nome entre as fases faria o código da fase 1 executar sobre
+   * outro id, que a pessoa não viu.
+   */
+  preparar: () => Promise<{ resumo: string; executar: () => Promise<unknown>; amarra?: unknown }>;
   traduzirErro?: (e: ApiError) => string | undefined;
 }): Promise<Resposta> {
   const { confirmacao, ...argsDaOperacao } = p.args;
@@ -206,11 +229,23 @@ async function executarEscrita(p: {
   };
   try {
     portaoDeEscopo(p.tool, p.escopo, p.caller, p.eventoId);
-    const { resumo, executar } = await p.preparar();
+  } catch (e: any) {
+    return falha(e, p.escopo);
+  }
+  try {
+    let preparado: Awaited<ReturnType<typeof p.preparar>>;
+    try {
+      preparado = await p.preparar();
+    } catch (e: any) {
+      auditar({ ...base, fase: "recusado", resultado: `erro ${e instanceof ApiError ? e.status : "local"}` });
+      throw e;
+    }
+    const { resumo, executar, amarra } = preparado;
+    const material = amarra === undefined ? argsDaOperacao : { args: argsDaOperacao, amarra };
 
     if (confirmacao === undefined || confirmacao === "") {
       auditar({ ...base, fase: "resumo" });
-      const codigo = codigoDeConfirmacao(p.tool, p.alvo, argsDaOperacao, p.caller);
+      const codigo = codigoDeConfirmacao(p.tool, p.alvo, material, p.caller);
       return {
         content: [{
           type: "text" as const,
@@ -219,7 +254,7 @@ async function executarEscrita(p: {
       };
     }
 
-    if (!confirmacaoConfere(confirmacao, p.tool, p.alvo, argsDaOperacao, p.caller)) {
+    if (!confirmacaoConfere(confirmacao, p.tool, p.alvo, material, p.caller)) {
       auditar({ ...base, fase: "codigo_invalido" });
       return {
         content: [{
@@ -318,14 +353,34 @@ const OPENAPI_INDEX = {
 
 const enc = encodeURIComponent;
 
+/**
+ * Todo id que vira segmento de path passa por um destes. `encodeURIComponent`
+ * não codifica `.`, então `eventoId=".."` viraria `/api/v1/lote/../adicionar`
+ * depois da normalização da URL: outro endpoint, com o token da pessoa.
+ */
+const UUID_ = z.string().uuid("Use o UUID do evento");
+const ID_OU_CODIGO = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Id ou código alfanumérico (letras, números, - e _)");
+
 
 // ── Apoio das tools de gestão de evento (GUE-550) ───────────────────────────
 // Todas falam com endpoints v1: os v3 de lote, cupom e vendas existem no
 // api.yaml mas respondem 501. Por isso ficam fora do spec-paths.
 
 const FUSO = "America/Sao_Paulo";
-const DIA = /^\d{4}-\d{2}-\d{2}$/;
-const DATA_COM_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DATA_COM_OFFSET_RE = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z|[+-]([01]\d|1[0-4]):[0-5]\d)$/;
+
+/** 2026-02-30 casa a regex mas o `Date` rola para 02/03; só vale o dia que volta igual. */
+const diaExiste = (dia: string) => new Date(`${dia}T00:00:00Z`).toISOString().slice(0, 10) === dia;
+
+const DIA = z
+  .string()
+  .regex(DIA_RE, "Use AAAA-MM-DD")
+  .refine(diaExiste, "Dia inexistente no calendário");
+const DATA_COM_OFFSET = z
+  .string()
+  .regex(DATA_COM_OFFSET_RE, "Data com offset explícito, ex.: 2026-11-01T20:00:00-03:00")
+  .refine((v) => diaExiste(v.slice(0, 10)), "Dia inexistente no calendário");
 const MAX_DIAS_PERIODO = 31;
 
 /**
@@ -391,7 +446,10 @@ async function vendasPorDia(eventoId: string, de: string, caller?: Caller) {
       return { nomeEvento, porDia };
     }
   }
-  throw new Error(`Histórico de vendas longo demais para chegar a ${de} (mais de ${TETO_PAGINAS * 100} dias com venda).`);
+  throw new Error(
+    `Histórico de vendas longo demais: li ${TETO_PAGINAS} páginas (${TETO_PAGINAS * 100} dias com venda, do mais recente para trás) ` +
+      `sem chegar a ${de}. Consulte um período mais recente.`,
+  );
 }
 
 
@@ -439,7 +497,7 @@ const TOOLS: Tool[] = [
     title: "Lote por código/ID",
     description: "Retorna um lote pelo código ou ID do evento e do lote (aceita UUID ou código). Requer auth.",
     openApiOperationId: "getLotePorCodigoOuId",
-    inputSchema: { codigoOrEventoId: z.string(), codigoOrLoteId: z.string() },
+    inputSchema: { codigoOrEventoId: ID_OU_CODIGO, codigoOrLoteId: ID_OU_CODIGO },
     auth: true,
     build: (a) => ({ path: `/api/v3/eventos/${enc(a.codigoOrEventoId)}/lotes/${enc(a.codigoOrLoteId)}` }),
   },
@@ -450,7 +508,7 @@ const TOOLS: Tool[] = [
       "Lista ingressos de um evento para check-in (acesso produtor/admin do evento). Filtro por texto livre (nome/email/código), paginação, sessão e ordenação.",
     openApiOperationId: "buscarIngressosPorEvento",
     inputSchema: {
-      eventoId: z.string(),
+      eventoId: ID_OU_CODIGO,
       filtro: z.string().optional().describe("Busca por nome, email ou código"),
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de ingressos retornados; máximo 100"),
       sessaoId: z.string().optional(),
@@ -494,7 +552,7 @@ const TOOLS: Tool[] = [
       "Extrato de compras de um evento para gestão de vendas. Filtre por texto e status; retorna até max_results da primeira página. Requer permissão sobre o evento.",
     openApiOperationId: "findExtratosByEvento",
     inputSchema: {
-      eventoId: z.string().describe("UUID do evento"),
+      eventoId: UUID_,
       filtro: z.string().optional().describe("Busca textual no extrato"),
       status: z.array(z.string()).optional().describe("Status de compra, ex.: PAGO ou PENDENTE"),
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de compras retornadas; máximo 100"),
@@ -512,7 +570,7 @@ const TOOLS: Tool[] = [
       "Retorna as vendas recentes de um evento para auditoria operacional. Não é uma trilha de alterações do evento; requer permissão de leitura de vendas.",
     openApiOperationId: "getContagemIngressosVendidos",
     inputSchema: {
-      eventoId: z.string().describe("UUID do evento"),
+      eventoId: UUID_,
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de vendas retornadas; máximo 100"),
     },
     auth: true,
@@ -523,7 +581,7 @@ const TOOLS: Tool[] = [
     title: "Resumo de vendas do evento",
     description: "Agregados de vendas de um evento para gestão. Requer permissão de leitura de vendas.",
     openApiOperationId: "getResumoVendas",
-    inputSchema: { eventoId: z.string().describe("UUID do evento") },
+    inputSchema: { eventoId: UUID_ },
     auth: true,
     build: (a) => ({ path: `/api/v1/metrica/${enc(a.eventoId)}/resumo-vendas` }),
   },
@@ -794,7 +852,7 @@ function createMcpServer(caller?: Caller): McpServer {
         "configurou — \"ainda não divulgado\", não é erro nem significa evento inexistente. " +
         "Schema detalhado: guedder://openapi/v3/tools/guedder_detalhes_evento.",
       inputSchema: {
-        eventoId: z.string().describe("UUID ou código alfanumérico do evento"),
+        eventoId: ID_OU_CODIGO.describe("UUID ou código alfanumérico do evento"),
         incluir: z
           .array(z.enum(["atracoes", "lotes", "venda"]))
           .optional()
@@ -875,9 +933,7 @@ function createMcpServer(caller?: Caller): McpServer {
             quantidade: doPedido.length,
             ingressos: doPedido.map((i: any) => ({ codigo: i.codigo, status: i.status, ativo: i.ativo })),
           };
-          return {
-            content: [{ type: "text" as const, text: JSON.stringify(resultado, null, 2) }],
-          };
+          return ok(resultado);
         } catch (e: any) {
           return falha(e, "conta:read");
         }
@@ -907,7 +963,7 @@ function createMcpServer(caller?: Caller): McpServer {
           "e só chame de novo com o código depois que ela confirmar. Nunca invente o código. " +
           "O cancelamento é assíncrono: a API aceita o pedido e o estorno acontece em seguida no gateway.",
         inputSchema: {
-          pedidoId: z.string().describe("Id do pedido a cancelar, como aparece em guedder_minhas_compras"),
+          pedidoId: ID_OU_CODIGO.describe("Id do pedido a cancelar, como aparece em guedder_minhas_compras"),
           confirmacao: z
             .string()
             .optional()
@@ -962,9 +1018,9 @@ function createMcpServer(caller?: Caller): McpServer {
           "Sem datas, é o dia de hoje. Devolve o total e a quebra por dia (0 nos dias sem venda). " +
           "Exige o escopo vendas:read e permissão sobre o evento.",
         inputSchema: {
-          eventoId: z.string().describe("UUID do evento"),
-          de: z.string().regex(DIA, "Use AAAA-MM-DD").optional().describe("Primeiro dia (AAAA-MM-DD). Padrão: o mesmo de `ate`"),
-          ate: z.string().regex(DIA, "Use AAAA-MM-DD").optional().describe("Último dia, inclusivo (AAAA-MM-DD). Padrão: hoje"),
+          eventoId: UUID_,
+          de: DIA.optional().describe("Primeiro dia (AAAA-MM-DD). Padrão: o mesmo de `ate`"),
+          ate: DIA.optional().describe("Último dia, inclusivo (AAAA-MM-DD). Padrão: hoje"),
         },
         outputSchema: TOOL_OUTPUT_SCHEMA,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -1003,7 +1059,7 @@ function createMcpServer(caller?: Caller): McpServer {
         description:
           "Lista os lotes ATIVOS de um evento que já venderam todo o estoque. Lote desativado não conta como esgotado. " +
           "Exige o escopo vendas:read e permissão sobre o evento.",
-        inputSchema: { eventoId: z.string().describe("UUID do evento") },
+        inputSchema: { eventoId: UUID_ },
         outputSchema: TOOL_OUTPUT_SCHEMA,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       },
@@ -1014,9 +1070,11 @@ function createMcpServer(caller?: Caller): McpServer {
           const lotes = await listarLotes(eventoId, caller);
           // Conta própria em vez de `estoqueDisponivel`: a API devolve 0 ali para
           // lote INATIVO, e todo lote desligado apareceria como esgotado.
+          // Sem `estoqueInicial` não dá para dizer que esgotou: ausente não é zero.
           const esgotados = lotes
             .filter((l) => (l?.enabled ?? l?.ativo) !== false)
-            .filter((l) => Number(l?.estoqueInicial ?? 0) - Number(l?.ingressosVendidos ?? 0) <= 0)
+            .filter((l) => typeof l?.estoqueInicial === "number")
+            .filter((l) => l.estoqueInicial - Number(l?.ingressosVendidos ?? 0) <= 0)
             .map((l) => ({ id: l.id, nome: l.nome, estoqueInicial: l.estoqueInicial, ingressosVendidos: l.ingressosVendidos ?? 0 }));
           return ok({ eventoId, totalLotes: lotes.length, esgotados });
         } catch (e: any) {
@@ -1035,12 +1093,12 @@ function createMcpServer(caller?: Caller): McpServer {
           "Chame PRIMEIRO sem `confirmacao` para receber o resumo e o código; mostre o resumo à pessoa e só chame de novo, " +
           "com os mesmos argumentos e o código, depois que ela confirmar. Exige o escopo lote:write.",
         inputSchema: {
-          eventoId: z.string().describe("UUID do evento"),
+          eventoId: UUID_,
           nome: z.string().trim().min(1).describe("Nome do lote, único no evento"),
           estoqueInicial: z.number().int().positive().describe("Quantidade de ingressos do lote"),
           precoUnitario: z.number().nonnegative().default(0).describe("Preço por ingresso, em reais. Padrão 0 (gratuito)"),
-          inicioVendas: z.string().regex(DATA_COM_OFFSET, "Data com offset explícito, ex.: 2026-11-01T20:00:00-03:00"),
-          terminoVendas: z.string().regex(DATA_COM_OFFSET, "Data com offset explícito, ex.: 2026-11-01T20:00:00-03:00"),
+          inicioVendas: DATA_COM_OFFSET,
+          terminoVendas: DATA_COM_OFFSET,
           privado: z.boolean().default(false).describe("Lote privado só aparece para quem tem o link/código"),
           compraMaxima: z.number().int().positive().optional().describe("Máximo de ingressos por compra"),
           confirmacao: z.string().optional().describe("Código devolvido pela chamada anterior. Sem ele, nada é criado."),
@@ -1113,7 +1171,7 @@ function createMcpServer(caller?: Caller): McpServer {
           "Chame PRIMEIRO sem `confirmacao` para receber o resumo e o código; mostre o resumo à pessoa e só chame de novo, " +
           "com os mesmos argumentos e o código, depois que ela confirmar. Exige o escopo cupom:write.",
         inputSchema: {
-          eventoId: z.string().describe("UUID do evento"),
+          eventoId: UUID_,
           nome: z.string().trim().min(1).describe("Código do cupom que o comprador digita, único no evento"),
           tipoDesconto: z.enum(["PERCENTUAL", "VALOR"]),
           valorDesconto: z.number().positive().describe("Percentual (0 a 100) ou valor em reais"),
@@ -1143,11 +1201,12 @@ function createMcpServer(caller?: Caller): McpServer {
               resumo: [
                 `Vou criar o cupom "${a.nome}" no evento ${eventoId}:`,
                 `- desconto: ${a.tipoDesconto === "PERCENTUAL" ? `${a.valorDesconto}%` : brl(a.valorDesconto)};`,
-                `- vale para: ${lotes.length ? lotes.map((l) => `"${l.nome}"`).join(", ") : "todos os lotes do evento"};`,
+                `- vale para: ${lotes.length ? lotes.map((l) => `"${l.nome}" (id ${l.id})`).join(", ") : "todos os lotes do evento"};`,
                 `- limite: ${a.limite ? `${a.limite} usos no total` : "sem limite de usos"};`,
                 "- cada pessoa usa o cupom em uma compra, e o desconto vale para um ingresso por compra (o mais caro).",
                 "O cupom já nasce ativo.",
               ].join("\n"),
+              amarra: lotes,
               executar: () =>
                 apiPost(`/api/v1/cupom/${enc(eventoId)}`, {
                   caller,
@@ -1233,23 +1292,15 @@ function createMcpServer(caller?: Caller): McpServer {
               motivo:
                 "Nenhuma linha de log com esse identificador na janela consultada. Confirme o id, ou informe o trace_id diretamente.",
             };
-            return {
-              structuredContent: { result: data },
-              content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-            };
+            return ok(data);
           }
 
           const linhas = await auditoria.linhasDoTrace(traceId, args?.max_linhas);
-          const data = { encontrado: true, trace_id: traceId, linhas };
-          return {
-            structuredContent: { result: data },
-            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-          };
+          // `message` de log é texto livre e pode ter e-mail de comprador: a
+          // allowlist de campos de auditoria.ts não basta, a redação também passa.
+          return ok({ encontrado: true, trace_id: traceId, linhas });
         } catch (e: any) {
-          return {
-            content: [{ type: "text" as const, text: `Erro: ${e?.message ?? String(e)}` }],
-            isError: true,
-          };
+          return falha(e);
         }
       },
     );

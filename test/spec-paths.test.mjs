@@ -10,6 +10,7 @@ function sampleArgs(schema) {
   const out = {};
   for (const [name, prop] of Object.entries(schema.properties ?? {})) {
     if (prop.type === "integer" || prop.type === "number") out[name] = 1;
+    else if (prop.format === "uuid") out[name] = "11111111-1111-1111-1111-111111111111";
     else if (prop.type === "array") out[name] = ["amostra"];
     else out[name] = "amostra";
   }

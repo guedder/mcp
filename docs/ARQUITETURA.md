@@ -495,10 +495,21 @@ fosse fixo ("CONFIRMAR"), o modelo poderia mandá-lo de primeira e a fase de
 resumo nunca chegaria à pessoa. Os **argumentos** entram no HMAC porque, sem
 eles, o código do "lote de 100 a R$ 10" confirmaria o "lote de 10.000 a R$ 0" no
 mesmo evento. JSON canônico (chaves ordenadas) para a ordem não importar.
+O que `preparar` resolve e a pessoa vê no resumo também entra (`amarra`): no
+cupom, os pares `{id, nome}` dos lotes, para que recriar um lote com o mesmo nome
+entre as fases invalide o código. Código fora de `^[A-Z0-9]{10}$` é recusado
+antes do `timingSafeEqual` (que lança com buffers de tamanhos diferentes, e um
+código não-ASCII tem mais bytes que caracteres).
 
 `preparar` roda nas duas fases e é onde mora toda recusa local (data sem offset,
 percentual > 100, nome de lote que não resolve para exatamente um lote): erro ali
-não escreve nada em nenhuma fase.
+não escreve nada em nenhuma fase, e é auditado como `fase: "recusado"`.
+
+**Id que vira path é validado no schema**: `z.string().uuid()` onde a API pede
+UUID; `^[A-Za-z0-9_-]{1,64}$` onde aceita código ou idPedido.
+`encodeURIComponent` não codifica `.`, e `eventoId=".."` viraria outro endpoint
+depois da normalização da URL. Datas são conferidas no calendário (2026-02-30 é
+recusado, não rola para março).
 
 Código errado é `isError`; código ausente **não** é erro (é a fase de resumo).
 
@@ -527,7 +538,7 @@ Uma linha JSON por evento, no **stderr** (no stdio o stdout é o canal JSON-RPC;
 o awslogs da task captura os dois):
 
 ```json
-{"audit":true,"ts":"…","tool":"guedder_criar_lote","fase":"resumo|execucao|codigo_invalido|negado",
+{"audit":true,"ts":"…","tool":"guedder_criar_lote","fase":"resumo|execucao|codigo_invalido|negado|recusado",
  "escopo":"lote:write","usuario":"<usuarioId|email>","eventoId":"…","alvo":"…","argsHash":"<16 hex>","resultado":"ok|erro 400"}
 ```
 
@@ -541,8 +552,11 @@ só o hash. Filtro no CloudWatch: `{ $.audit IS TRUE }`.
 `redigir()` roda na saída de **todas** as tools (`ok()` em `src/index.ts`).
 `CHAVES_SENSIVEIS` em `src/escrita.ts` é a lista única (CPF, e-mail, telefone,
 nome/foto do portador, código de ingresso, cartão); tool nova herda sem fazer
-nada. `codigo` sozinho só é mascarado em objeto com cara de ingresso (`idPedido`
-ou `nomePortador`): em evento e lote ele é identificador público. O teste "nenhuma
+nada. `codigo` é redigido **por padrão**: só fica visível em objeto de lote
+(`estoqueInicial`) ou evento (`dataInicio`) sem marcador de ingresso
+(`ingressoId`, `idPedido`, `nomePortador`, `checkIn`). Texto livre (corpo de erro
+da API, `message` de log) passa por `mascararTexto` (e-mail e CPF pontuado), e o
+corpo de erro é truncado em 300 caracteres. O teste "nenhuma
 tool devolve dado pessoal" (`mvp.test.mjs`) passa todas as tools por uma API que
 devolve PII em todo canto.
 

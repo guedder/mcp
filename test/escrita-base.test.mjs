@@ -48,14 +48,32 @@ test("redigir mascara dado pessoal em qualquer profundidade", () => {
   assert.equal(r.nulo.cpf, null, "null continua null: redigido sugeriria que havia valor");
 });
 
-test("codigo só é mascarado em objeto com cara de ingresso", () => {
+test("codigo é redigido por padrão e só fica visível em lote ou evento", () => {
   const r = redigir({
-    lote: { id: "l1", codigo: "pista-1" },
-    evento: { codigo: "festa-x" },
+    lote: { id: "l1", codigo: "pista-1", estoqueInicial: 10 },
+    evento: { codigo: "festa-x", dataInicio: "2026-11-01T20:00:00-03:00" },
     ingresso: { idPedido: "p1", codigo: "ING-SECRETO" },
+    // Formato novo de ingresso, sem nenhum marcador conhecido: não pode vazar.
+    semMarcador: { codigo: "ING-SEM-MARCADOR", status: "ATIVO" },
+    // Ingresso que carrega a data do evento: marcador de ingresso vence.
+    ingressoComData: { ingressoId: "i1", codigo: "ING-COM-DATA", dataInicio: "2026-11-01" },
   });
   assert.equal(r.lote.codigo, "pista-1");
   assert.equal(r.evento.codigo, "festa-x");
   assert.equal(r.ingresso.codigo, "[redigido]");
   assert.equal(r.ingresso.idPedido, "p1");
+  assert.equal(r.semMarcador.codigo, "[redigido]");
+  assert.equal(r.ingressoComData.codigo, "[redigido]");
+});
+
+test("redigir mascara e-mail e CPF em texto livre", () => {
+  const r = redigir({ message: "compra de fulano@x.com.br, cpf 123.456.789-09, pedido 12345678901" });
+  assert.equal(r.message, "compra de [redigido], cpf [redigido], pedido 12345678901");
+});
+
+test("confirmação com caracteres não-ASCII é recusada, não lança", () => {
+  // 10 caracteres, 20 bytes: com a comparação por .length o timingSafeEqual lançava.
+  assert.doesNotThrow(() => confirmacaoConfere("ÁÁÁÁÁÁÁÁÁÁ", "op", "e-1", ARGS, PESSOA));
+  assert.equal(confirmacaoConfere("ÁÁÁÁÁÁÁÁÁÁ", "op", "e-1", ARGS, PESSOA), false);
+  assert.equal(confirmacaoConfere("abcdefghij", "op", "e-1", ARGS, PESSOA), false);
 });
