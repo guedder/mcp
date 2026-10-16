@@ -686,6 +686,7 @@ Gestão de evento (para quem produz):
 - Ingressos vendidos num período (até 31 dias, dias em São Paulo; sem datas = hoje): guedder_ingressos_vendidos_periodo.
 - Lotes que esgotaram: guedder_lotes_esgotados.
 - Criar lote: guedder_criar_lote. Criar cupom: guedder_criar_cupom (lotes pelo NOME; sem lotes = todos).
+- Exemplos de pedidos e a tool de cada um: resource guedder://prompts-sugeridos.
 
 Escrita — guedder_cancelar_pedido, guedder_criar_lote, guedder_criar_cupom:
 São as únicas tools que mudam estado, e todas seguem o mesmo protocolo de duas fases:
@@ -696,6 +697,34 @@ Nunca invente o código nem pule a etapa 2: o código existe justamente para gar
 Cancelar pedido devolve o valor pelo mesmo meio de pagamento e não tem desfazer.
 Cada tool exige um escopo concedido ao conectar (pedido:cancelar, lote:write, cupom:write; as de vendas, vendas:read). Se a pessoa não concedeu, o erro diz isso, e o caminho é ela reconectar autorizando — não há como contornar por aqui.
 Dados pessoais (CPF, e-mail, telefone, código de ingresso, cartão) chegam como "[redigido]" de propósito. Não tente obtê-los por outra tool.`;
+
+/**
+ * Pedidos de exemplo de quem produz evento, como chegam do chat da Guedder no WhatsApp. Ficam num
+ * resource, e não no INSTRUCTIONS, para o cliente poder mostrar como sugestão e o agente consultar
+ * qual tool atende cada um. Cada item aponta para uma tool que existe (o teste confere).
+ */
+const PROMPTS_SUGERIDOS: { pedido: string; tool: string }[] = [
+  { pedido: "Quantos ingressos eu vendi hoje?", tool: "guedder_ingressos_vendidos_periodo" },
+  { pedido: "Já esgotou algum lote? Se sim, quais?", tool: "guedder_lotes_esgotados" },
+  { pedido: 'Crie um lote chamado "acesso vip" com limitação de 100 retiradas', tool: "guedder_criar_lote" },
+  {
+    pedido:
+      'Crie um cupom chamado PROMO10 que dá 10% de desconto, limite de 100 utilizações, apenas nos lotes "acesso vip" e "Lote inicial"',
+    tool: "guedder_criar_cupom",
+  },
+];
+
+function promptsSugeridosMarkdown(): string {
+  const linhas = PROMPTS_SUGERIDOS.map((p) => `- ${p.pedido} → \`${p.tool}\``);
+  return [
+    "# Pedidos sugeridos",
+    "",
+    "Exemplos do que quem produz evento pode pedir. Criar lote e cupom passam pela confirmação em duas fases.",
+    "",
+    ...linhas,
+    "",
+  ].join("\n");
+}
 
 function createMcpServer(caller?: Caller): McpServer {
   const server = new McpServer({ name: "guedder-ops", version: "0.1.0" }, { instructions: INSTRUCTIONS });
@@ -709,6 +738,19 @@ function createMcpServer(caller?: Caller): McpServer {
     },
     async (uri) => ({
       contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(OPENAPI_INDEX, null, 2) }],
+    }),
+  );
+  // Os quatro pedidos usam tools com login; no modo comprador (PUBLIC_ONLY) nenhuma existe.
+  if (!PUBLIC_ONLY) server.registerResource(
+    "guedder_prompts_sugeridos",
+    "guedder://prompts-sugeridos",
+    {
+      title: "Pedidos sugeridos",
+      description: "Exemplos de pedidos de quem produz evento, cada um com a tool que o atende.",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/markdown", text: promptsSugeridosMarkdown() }],
     }),
   );
   const activeTools = PUBLIC_ONLY ? TOOLS.filter((t) => !t.auth) : TOOLS;
