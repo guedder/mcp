@@ -103,3 +103,22 @@ test("nome de pessoa em ingresso é redigido; nome de lote e de evento, não", (
   assert.equal(r.lote.nome, "Pista");
   assert.equal(r.evento.nome, "Show");
 });
+
+test("perfil do usuário logado sai sem dado pessoal; atração mantém nome e foto", () => {
+  // Forma documentada de UsuarioEntity (guedder_usuario_logado).
+  const r = redigir({
+    perfil: {
+      id: "u1", nome: "Fulana", sobrenome: "de Tal", email: "f@x.com", cpf: "1", telefone: "2",
+      fotoUrl: "https://x/f.jpg", dataNascimento: "1990-01-01", nacionalidade: "BR",
+      identidadeGenero: "F", endereco: { rua: "R" }, role: "PRODUTOR", canManageEvents: true,
+    },
+    atracao: { id: "a1", nome: "Banda X", fotoUrl: "https://x/banda.jpg" },
+  });
+  for (const k of ["nome", "sobrenome", "email", "cpf", "telefone", "fotoUrl", "dataNascimento", "nacionalidade", "identidadeGenero", "endereco"]) {
+    assert.equal(r.perfil[k], "[redigido]", `${k} vazou`);
+  }
+  assert.equal(r.perfil.role, "PRODUTOR");
+  assert.equal(r.perfil.canManageEvents, true);
+  assert.equal(r.atracao.nome, "Banda X");
+  assert.equal(r.atracao.fotoUrl, "https://x/banda.jpg");
+});

@@ -159,6 +159,12 @@ export const CHAVES_SENSIVEIS = new Set(
     "cvv",
     "cvc",
     "chavePix",
+    // Perfil (UsuarioEntity, guedder_usuario_logado).
+    "sobrenome",
+    "dataNascimento",
+    "identidadeGenero",
+    "endereco",
+    "nacionalidade",
   ].map((k) => k.toLowerCase()),
 );
 
@@ -176,11 +182,16 @@ const CARA_DE_LOTE_OU_EVENTO = ["estoqueInicial", "dataInicio"];
 const CARA_DE_INGRESSO = ["ingressoId", "idPedido", "nomePortador", "checkIn"];
 
 /**
- * Chaves que só são pessoais dentro de um ingresso: em `IngressoAssentoVO`,
- * `nome` é o nome de quem comprou ou recebeu; em lote e evento é o nome do lote
- * e do evento, que precisa continuar visível.
+ * Chaves ambíguas, pessoais só num contexto: `nome` em `IngressoAssentoVO` é
+ * quem comprou, em `UsuarioEntity` é a pessoa logada; em lote, evento e atração
+ * é nome público e precisa continuar visível. Mesma coisa com `fotoUrl`
+ * (perfil vs. atração). O contexto é reconhecido por marcadores do objeto.
  */
-const PESSOAL_EM_INGRESSO = new Set(["nome", "codigo"]);
+const CARA_DE_PESSOA = ["sobrenome", "dataNascimento", "cpf", "compradorId"];
+const PESSOAL_POR_CONTEXTO: [marcadores: string[], chaves: Set<string>][] = [
+  [CARA_DE_INGRESSO, new Set(["nome", "codigo"])],
+  [CARA_DE_PESSOA, new Set(["nome", "fotoUrl"])],
+];
 
 function codigoPublico(o: Record<string, unknown>): boolean {
   return CARA_DE_LOTE_OU_EVENTO.some((k) => k in o) && !CARA_DE_INGRESSO.some((k) => k in o);
@@ -210,7 +221,7 @@ export function redigir<T>(valor: T): T {
     const sensivel =
       CHAVES_SENSIVEIS.has(k.toLowerCase()) ||
       (k === "codigo" && !codigoPublico(o)) ||
-      (PESSOAL_EM_INGRESSO.has(k) && CARA_DE_INGRESSO.some((m) => m in o));
+      PESSOAL_POR_CONTEXTO.some(([marcadores, chaves]) => chaves.has(k) && marcadores.some((m) => m in o));
     saida[k] = sensivel && v !== null && v !== undefined ? REDIGIDO : redigir(v);
   }
   return saida as T;

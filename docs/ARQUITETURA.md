@@ -554,7 +554,10 @@ só o hash. Filtro no CloudWatch: `{ $.audit IS TRUE }`.
 nome/foto do portador, código de ingresso, cartão); tool nova herda sem fazer
 nada. `codigo` é redigido **por padrão**: só fica visível em objeto de lote
 (`estoqueInicial`) ou evento (`dataInicio`) sem marcador de ingresso
-(`ingressoId`, `idPedido`, `nomePortador`, `checkIn`). Texto livre (corpo de erro
+(`ingressoId`, `idPedido`, `nomePortador`, `checkIn`). `nome` também é redigido em ingresso, e `nome`/`fotoUrl`
+em objeto com cara de pessoa (`sobrenome`, `dataNascimento`, `cpf`,
+`compradorId`, como o perfil de `guedder_usuario_logado`); em lote, evento e
+atração continuam visíveis. Texto livre (corpo de erro
 da API, `message` de log) passa por `mascararTexto` (e-mail e CPF pontuado), e o
 corpo de erro é truncado em 300 caracteres. O teste "nenhuma
 tool devolve dado pessoal" (`mvp.test.mjs`) passa todas as tools por uma API que
