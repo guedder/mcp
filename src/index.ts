@@ -368,7 +368,7 @@ const ID_OU_CODIGO = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, "Id ou código al
 
 const FUSO = "America/Sao_Paulo";
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
-const DATA_COM_OFFSET_RE = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z|[+-]([01]\d|1[0-4]):[0-5]\d)$/;
+const DATA_COM_OFFSET_RE = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z|[+-](0\d|1[0-3]):[0-5]\d|[+-]14:00)$/;
 
 /**
  * 2026-02-30 casa a regex mas o `Date` rola para 02/03; só vale o dia que volta
@@ -387,7 +387,9 @@ const DIA = z
 const DATA_COM_OFFSET = z
   .string()
   .regex(DATA_COM_OFFSET_RE, "Data com offset explícito, ex.: 2026-11-01T20:00:00-03:00")
-  .refine((v) => diaExiste(v.slice(0, 10)), "Dia inexistente no calendário");
+  .refine((v) => diaExiste(v.slice(0, 10)), "Dia inexistente no calendário")
+  // O offset vai de -14:00 a +14:00 (a regex já recorta); o parse completo pega o resto.
+  .refine((v) => !Number.isNaN(Date.parse(v)), "Data/hora inválida");
 const MAX_DIAS_PERIODO = 31;
 
 /**

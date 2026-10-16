@@ -104,6 +104,20 @@ test("nome de pessoa em ingresso é redigido; nome de lote e de evento, não", (
   assert.equal(r.evento.nome, "Show");
 });
 
+test("lista de check-in sai sem participante nem operador", () => {
+  // Forma documentada de IngressosCheckInDto (guedder_buscar_ingressos_evento).
+  const r = redigir({
+    ingressoId: "i1", nomeParticipante: "Fulana", emailParticipante: "f@x.com", telefoneParticipante: "1",
+    nomeLote: "Pista", dataCheckin: "2026-11-01T21:00:00-03:00", operadorCheckin: "porteiro@guedder.com",
+    codigoIngresso: "ING-1", observacoes: "ok",
+  });
+  for (const k of ["nomeParticipante", "emailParticipante", "telefoneParticipante", "operadorCheckin", "codigoIngresso"]) {
+    assert.equal(r[k], "[redigido]", `${k} vazou`);
+  }
+  assert.equal(r.nomeLote, "Pista");
+  assert.equal(r.dataCheckin, "2026-11-01T21:00:00-03:00");
+});
+
 test("repasse sai sem chave PIX nem titular", () => {
   // Forma documentada de EventoResumoRepasse (guedder_listar_resumo_repasses_eventos).
   const r = redigir({ eventoId: "e1", nome: "Show", totalVendido: 10, chavePix: "f@x.com", favorecido: "Fulana de Tal" });

@@ -149,6 +149,8 @@ export const CHAVES_SENSIVEIS = new Set(
     "nomePortador",
     "fotoPortador",
     "nomeParticipante",
+    // Quem fez o check-in (IngressosCheckInDto): identifica a pessoa da equipe.
+    "operadorCheckin",
     "fotoComprador",
     "codigoIngresso",
     "codigoIngressoPortador",

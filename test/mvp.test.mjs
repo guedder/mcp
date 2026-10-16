@@ -557,6 +557,12 @@ test("dia inexistente no calendário é recusado, não rola para outro dia", asy
       assert.equal(lote.isError, true);
       const hora = await chamar(client, "guedder_criar_lote", { ...LOTE, inicioVendas: "2026-11-01T25:00:00-03:00" });
       assert.equal(hora.isError, true);
+      // Offset fora de -14:00..+14:00 é recusado antes de qualquer escrita.
+      for (const offset of ["+19:00", "+15:00", "-14:30"]) {
+        const r = await chamar(client, "guedder_criar_lote", { ...LOTE, inicioVendas: `2026-11-01T10:00:00${offset}` });
+        assert.equal(r.isError, true, `aceitou offset ${offset}`);
+      }
+      assert.notEqual((await chamar(client, "guedder_criar_lote", { ...LOTE, inicioVendas: "2026-11-01T10:00:00+14:00" })).isError, true);
       // Mês 13 não vira data: tem que ser erro de validação, não RangeError do refine.
       for (const [nome, args] of [
         ["guedder_ingressos_vendidos_periodo", { eventoId: EVENTO, de: "2026-13-01" }],
