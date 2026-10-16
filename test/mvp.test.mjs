@@ -557,6 +557,15 @@ test("dia inexistente no calendário é recusado, não rola para outro dia", asy
       assert.equal(lote.isError, true);
       const hora = await chamar(client, "guedder_criar_lote", { ...LOTE, inicioVendas: "2026-11-01T25:00:00-03:00" });
       assert.equal(hora.isError, true);
+      // Mês 13 não vira data: tem que ser erro de validação, não RangeError do refine.
+      for (const [nome, args] of [
+        ["guedder_ingressos_vendidos_periodo", { eventoId: EVENTO, de: "2026-13-01" }],
+        ["guedder_criar_lote", { ...LOTE, terminoVendas: "2026-13-01T10:00:00-03:00" }],
+      ]) {
+        const r = await chamar(client, nome, args);
+        assert.equal(r.isError, true);
+        assert.match(r.content[0].text, /Dia inexistente/, `${nome}: ${r.content[0].text}`);
+      }
       assert.equal(recebidos.length, 0);
     },
   );

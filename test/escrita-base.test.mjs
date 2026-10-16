@@ -104,6 +104,15 @@ test("nome de pessoa em ingresso é redigido; nome de lote e de evento, não", (
   assert.equal(r.evento.nome, "Show");
 });
 
+test("repasse sai sem chave PIX nem titular", () => {
+  // Forma documentada de EventoResumoRepasse (guedder_listar_resumo_repasses_eventos).
+  const r = redigir({ eventoId: "e1", nome: "Show", totalVendido: 10, chavePix: "f@x.com", favorecido: "Fulana de Tal" });
+  assert.equal(r.chavePix, "[redigido]");
+  assert.equal(r.favorecido, "[redigido]");
+  assert.equal(r.nome, "Show");
+  assert.equal(r.totalVendido, 10);
+});
+
 test("perfil do usuário logado sai sem dado pessoal; atração mantém nome e foto", () => {
   // Forma documentada de UsuarioEntity (guedder_usuario_logado).
   const r = redigir({

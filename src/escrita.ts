@@ -159,6 +159,8 @@ export const CHAVES_SENSIVEIS = new Set(
     "cvv",
     "cvc",
     "chavePix",
+    // Titular da chave PIX (EventoResumoRepasse.favorecido): é o nome de quem recebe.
+    "favorecido",
     // Perfil (UsuarioEntity, guedder_usuario_logado).
     "sobrenome",
     "dataNascimento",

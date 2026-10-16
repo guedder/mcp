@@ -370,8 +370,15 @@ const FUSO = "America/Sao_Paulo";
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DATA_COM_OFFSET_RE = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z|[+-]([01]\d|1[0-4]):[0-5]\d)$/;
 
-/** 2026-02-30 casa a regex mas o `Date` rola para 02/03; só vale o dia que volta igual. */
-const diaExiste = (dia: string) => new Date(`${dia}T00:00:00Z`).toISOString().slice(0, 10) === dia;
+/**
+ * 2026-02-30 casa a regex mas o `Date` rola para 02/03; só vale o dia que volta
+ * igual. 2026-13-01 nem vira data (`Invalid Date`), e `toISOString()` lançaria
+ * RangeError de dentro do refine, em vez de erro de validação.
+ */
+const diaExiste = (dia: string) => {
+  const d = new Date(`${dia}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === dia;
+};
 
 const DIA = z
   .string()
