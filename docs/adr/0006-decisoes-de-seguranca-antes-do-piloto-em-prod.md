@@ -48,60 +48,96 @@ Cognito e **pular a tela de consent do MCP** (ADR 0002, teto registrado no
 código em `telaDeConsent`). O Cognito não tem tela de consent por escopo; se o
 escopo está no app client e o cliente pede, ele emite.
 
-A alternativa que fecha os dois tetos (tela pública + client público): tornar o
-app client **confidencial**, secret só no servidor MCP, e o MCP passar a emitir
-a própria sessão — molde na casa: `CheckinSessionTokenService` no
-`guedder-api` (JWT RS256, escopos calculados na emissão e congelados, `aud`
-amarrado ao serviço, TTL curto, sem revogação como tradeoff assumido).
+### O que NÃO fecha o bypass (correção à ADR 0002)
+
+A ADR 0002 (e a §7 da ARQUITETURA, antes desta revisão) diziam que fechar os
+dois tetos era: **app client confidencial + MCP emitir a própria sessão**
+(molde `CheckinSessionTokenService`). Isso **não basta**.
+
+Com callback allowlisted no Cognito (o caso do Claude.ai e do Inspector), o
+fluxo de bypass continua mesmo com secret só no MCP:
+
+1. o cliente vai **direto** ao `/authorize` do Cognito — o Cognito **não exige
+   o secret** no authorize;
+2. o Cognito devolve o `code` no callback allowlisted do cliente;
+3. o cliente manda `code` + PKCE `code_verifier` ao `/token` **público** do
+   MCP (fachada);
+4. o MCP acrescenta o secret, troca o code no Cognito e — se emitir outra
+   sessão — devolve um JWT novo.
+
+Emitir outro JWT **depois** da troca não prova que a tela de consent rodou.
+O secret no MCP só impede que o *cliente* chame o `/token` do Cognito
+direto; não impede que ele use o `/token` do MCP como proxy após um
+authorize que pulou o consent.
+
+**A alternativa confidencial só vale se o desenho também fizer uma destas:**
+
+| | (a) Transação de consent no servidor | (b) Callback upstream do MCP + code downstream |
+|---|---|---|
+| Ideia | `/token` só troca code se existir uma transação de consent (prova HMAC / nonce de uso único / registro) amarrada a esse `code` (ou ao `state`/`code_challenge` que o produziu) | `callback_urls` do Cognito apontam **só** para o MCP; o MCP, após consent + login, emite um **code próprio** para o `redirect_uri` do cliente downstream |
+| O que o bypass perde | Code obtido no Cognito-direto não tem transação → `/token` do MCP recusa | Cliente nunca recebe o code do Cognito; o code que ele troca só nasce depois do consent no MCP |
+| Custo extra além de “confidencial + sessão” | Estado (ou prova verificável) ligando consent → code; `/token` deixa de ser repasse cego | MCP vira AS de verdade para o cliente: callback próprio, emissão de code, PKCE downstream, documentação/compat com Claude.ai e Inspector |
+
+Sem (a) ou (b), “confidencial + sessão” é custo pago sem fechar o gate.
 
 ### Trade-offs
 
-| | Manter público (PKCE) | Virar confidencial + sessão do MCP |
-|---|---|---|
-| Consent na prática | Camada de UX/autorização; cliente deliberado contorna | Consent vira gate real: o code só troca com secret no MCP |
-| Custo de implementação | Zero agora | App client novo (ou ForceNew no atual), secret no Secrets Manager, `/token` deixa de ser repasse puro, emissão/validação de sessão própria, JWKS, rotação de chave, testes de auth inteiros |
-| Clientes MCP de IA (Claude.ai, Inspector) | Já funcionam com PKCE público | Precisam falar com o MCP como AS de verdade, não só fachada; exige validar cada cliente |
-| Superfície de ataque | Limitada pela allowlist de callbacks | Secret vazado do servidor vira outro problema; janela de revogação herda o tradeoff do check-in |
-| Quando se paga | Sempre que o cliente for "nosso" ou allowlisted | Quando existir cliente de terceiro de fato não confiável |
+| | Manter público (PKCE) | Confidencial + sessão **sem** (a)/(b) | Confidencial + sessão **com** (a) ou (b) |
+|---|---|---|---|
+| Consent na prática | Camada de UX; cliente deliberado contorna | **Ainda contorna** (authorize Cognito → `/token` do MCP) | Consent vira gate real |
+| Custo de implementação | Zero agora | Secret, `/token` com Basic, sessão própria, JWKS — **e o bypass permanece** | Tudo da coluna do meio **mais** transação de consent amarrada ao code **ou** callback upstream + code downstream; revalidar cada cliente MCP |
+| Clientes MCP de IA | Já funcionam com PKCE público | Podem continuar falando com a fachada, mas o ganho de segurança é ilusório | Mudança de contrato OAuth; Claude.ai / Inspector / plugin precisam do fluxo novo |
+| Superfície de ataque | Limitada pela allowlist de `callback_urls` e pelos escopos do app client | Secret no servidor + mesma allowlist; bypass de consent intacto | Allowlist pode encolher (em (b), só o MCP); secret e estado de consent passam a ser críticos |
+| Quando se paga | Piloto com clientes allowlisted | Nunca — não compra o que parece comprar | Quando existir cliente de terceiro não confiável **e** houver orçamento para (a) ou (b) |
 
 ### Recomendação (proposta)
 
-**Aceitar o teto do client público no primeiro piloto.**
+**Manter o client público (PKCE) no primeiro piloto** — continua coerente.
 
 Motivos:
 
-1. Os consumidores do piloto são Claude.ai (callback já allowlisted) e o plugin
-   da própria Guedder — o mesmo critério que a ADR 0002 já registrou como
-   "não se paga enquanto o cliente é o plugin da própria Guedder".
-2. Ninguém está conectado em produção ainda; o serviço ECS de prod **ainda não
-   existe**. O risco imediato não é abuso em massa, é abrir a porta com o
-   desenho errado.
-3. Virar confidencial **antes** do piloto atrasa GUE-565 sem mudar o perfil de
-   ameaça do piloto (callbacks fechados, escopos mínimos).
-4. O gatilho para reabrir continua o mesmo: **cliente de terceiro não
-   confiável** ou callback imprevisível (porta local sorteada, DCR de verdade).
+1. Os consumidores do piloto são Claude.ai (callback allowlisted) e o plugin
+   da própria Guedder. O freio real hoje é a allowlist de `callback_urls` +
+   escopos do app client, não a tela de consent como barreira criptográfica.
+2. “Virar confidencial + emitir sessão” **sem** (a) ou (b) atrasa GUE-565 e
+   **não** fecha o bypass — é o custo errado na hora errada.
+3. Fechar de verdade exige redesign OAuth ((a) ou (b)), não só um secret no
+   Secrets Manager. Esse pacote é desproporcional ao perfil de ameaça do
+   piloto (ninguém conectado em prod; serviço ECS de prod ainda não existe).
+4. O gatilho para reabrir continua: **cliente de terceiro não confiável** ou
+   callback imprevisível — e aí a issue filha tem que escolher (a) ou (b)
+   explicitamente, não só “tornar confidencial”.
 
-O que **não** é recomendação: esquecer o teto. Ele fica escrito na §15 e neste
-ADR até a decisão 1 ser aceita ou substituída.
+O teto permanece escrito na §15 e neste ADR. A frase da ADR 0002 sobre “o que
+fecharia os dois tetos” fica **incompleta** até essa ADR ser emendada; a
+correção normativa para o piloto é esta (0006).
 
 ### Issues filhas que esta decisão geraria (não criar agora)
 
-Se **aceitar público no piloto**:
+Se **aceitar público no piloto** (recomendado):
 
-- *(docs/ops)* Registrar no runbook de prod que o teto é aceito e que callback
-  novo = revisão de segurança, não chore.
-- *(opcional, infra)* Alarme/metricas de `/authorize` do Cognito batendo sem
-  passar pelo host do MCP (sinal de bypass) — nice-to-have, não bloqueia piloto.
+- *(docs/ops)* Runbook de prod: teto aceito; callback novo = revisão de
+  segurança; não tratar “confidencial sem (a)/(b)” como endurecimento.
+- *(docs)* Emendar ADR 0002 / comentários em `telaDeConsent` / README que
+  ainda afirmam que confidencial + sessão fecha o bypass sozinho.
+- *(opcional, infra)* Métrica de `/authorize` do Cognito sem passar pelo host
+  do MCP — sinal de bypass; não bloqueia piloto.
 
-Se **exigir confidencial antes do piloto**:
+Se **fechar o gate de consent de verdade** (depois do piloto ou se o Danilo
+antecipar):
 
-- *(mcp)* Emitir sessão própria no molde `CheckinSessionTokenService` (chave
-  RS256, JWKS, `aud`, escopos congelados, TTL).
-- *(mcp)* `/token` deixa de ser só repasse: troca code↔token com secret e emite
-  a sessão do MCP.
-- *(infra/identity)* App client confidencial (ou client novo + deprecar o
-  público); secret no Secrets Manager; env na task do MCP.
-- *(mcp + clientes)* Revalidar Claude.ai, Inspector e plugin com o novo fluxo.
+- *(mcp, desenho)* Escolher **(a) transação de consent amarrada ao `/token`**
+  ou **(b) callback upstream do MCP + code downstream** — ADR de implementação
+  antes de código.
+- *(mcp)* Se (a): persistir/verificar a prova de consent no momento do
+  `/token`; recusar code sem transação; testes de bypass Cognito-direto.
+- *(mcp)* Se (b): endpoint de callback Cognito→MCP; emissão de authorization
+  code próprio; PKCE/state downstream; `callback_urls` do Cognito = só o MCP.
+- *(mcp)* Sessão própria (molde `CheckinSessionTokenService`) **como peça do
+  pacote (a)/(b)**, não como solução isolada — JWKS, `aud`, TTL, rotação.
+- *(infra/identity)* App client confidencial (secret no SM) **e**, no caso (b),
+  remoção dos callbacks de terceiros da allowlist do Cognito.
+- *(mcp + clientes)* Revalidar Claude.ai, Inspector e plugin no fluxo escolhido.
 
 ---
 
@@ -255,7 +291,8 @@ decisão 1.
   o inventário + as três decisões com status.
 - O piloto em prod pode seguir com client público **desde que** a allowlist de
   callbacks e o conjunto de escopos do RS/app client sejam tratados como
-  superfície de segurança (toda adição = PR revisado).
+  superfície de segurança (toda adição = PR revisado). Não confundir
+  “confidencial + sessão” com fechamento do gate de consent — falta (a) ou (b).
 - O buraco de `vendas:read` nas tools antigas deixa de atravessar a porta de
   prod, se a decisão 2 for aceita na ordem Cognito → código.
 - Nada deste ADR implementa hospedagem ECS de prod, segredo HMAC em Secrets
@@ -270,8 +307,10 @@ decisão 1.
 - **Fechar o teto do consent só com HMAC mais forte.** Não fecha: a tela
   continua pública e o atalho Cognito-direto continua existindo com client
   público (ADR 0002).
-- **Client confidencial sem sessão própria do MCP** (só secret no token
-  endpoint, token ainda é o do Cognito). Fecha o atalho de trocar code sem o
-  MCP, mas clientes públicos de IA (Claude) não guardam secret — incompatível
-  com o conector atual. Por isso o molde completo é confidencial **no MCP** +
-  sessão emitida aqui.
+- **Client confidencial + sessão do MCP, sem (a)/(b).** Parecia fechar o
+  bypass (texto antigo da ADR 0002); na prática o cliente ainda autoriza no
+  Cognito e usa o `/token` do MCP como proxy com o secret do servidor.
+  Descartada como “endurecimento” — custo sem gate.
+- **Client confidencial sem sessão própria** (só secret no `/token`, token
+  ainda o do Cognito). Mesmo furo se `/token` for repasse cego; e clientes de
+  IA públicos não guardam secret no conector atual.

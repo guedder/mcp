@@ -354,9 +354,13 @@ autorização, não barreira criptográfica:
    `/authorize` do Cognito, contornando este servidor.
 
 O que limita o estrago continua sendo a lista de escopos do app client e a de
-`callback_urls`. Os dois se fecham com a mesma mudança: app client
-confidencial, secret só neste servidor, e o MCP passando a emitir a própria
-sessão — molde na casa: `CheckinSessionTokenService` do `guedder-api`.
+`callback_urls`. **Atenção:** tornar o app client confidencial e o MCP emitir
+outra sessão (molde `CheckinSessionTokenService`) **não fecha** o bypass sozinho
+— o cliente ainda pode ir ao `/authorize` do Cognito (que não exige secret) e
+trocar o `code` no `/token` público deste servidor, que acrescentaria o secret.
+Fechar de verdade exige também amarrar a troca de token a uma transação de
+consent no servidor, ou usar callback upstream próprio do MCP e emitir um code
+downstream separado. Detalhe e decisão de piloto: ADR 0006 (proposta).
 
 ---
 
@@ -788,8 +792,10 @@ abrir issues filhas.
 
 1. **Client público vs confidencial** — o teto (ir direto ao `/authorize` do
    Cognito e pular a tela de consent) é aceitável no primeiro piloto?
-   Recomendação da proposta: **sim, aceitar no piloto**; gatilho para fechar =
-   cliente de terceiro não confiável (molde `CheckinSessionTokenService`).
+   Recomendação da proposta: **sim, manter PKCE público no piloto**. Fechar o
+   gate depois exige confidencial **mais** transação de consent no `/token`
+   **ou** callback upstream do MCP + code downstream — só “confidencial +
+   sessão” não basta (ADR 0006, Decisão 1).
 2. **`vendas:read` nas leituras de venda antigas** —
    `guedder_auditar_vendas_evento` e `guedder_resumo_vendas_evento` ainda não
    exigem o escopo. Em prod ninguém conectou; janela barata. Recomendação:
