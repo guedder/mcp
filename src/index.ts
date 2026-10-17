@@ -684,8 +684,10 @@ Regras:
 
 Gestão de evento (para quem produz):
 1. Ache o evento e o id entre os que a pessoa gerencia: guedder_meus_eventos
-   (dona do evento ou papel SOCIO/GERENTE/CHECKIN). Não usa a lista de
-   repasses administrativos — ADMIN sem vínculo com o evento não o vê aqui.
+   (dona do evento ou papel SOCIO/GERENTE/CHECKIN). Não use a lista de
+   repasses administrativos. Limitação conhecida: com papel ADMIN da
+   plataforma, a API /eventos/gestao ainda pode devolver o acervo inteiro
+   (só a 1ª página) — o MCP não filtra vínculo no cliente.
 2. Com o id: ingressos vendidos num período (até 31 dias, dias em São Paulo;
    sem datas = hoje): guedder_ingressos_vendidos_periodo.
 3. Lotes que esgotaram: guedder_lotes_esgotados.
@@ -1073,10 +1075,17 @@ function createMcpServer(caller?: Caller): McpServer {
   // vendas ou criar lote neste evento é a API; aqui o portão é só o escopo
   // (o que ela deixou o agente fazer) e, nas escritas, a confirmação.
   //
-  // guedder_meus_eventos NÃO tem bypass de admin neste servidor: ADMIN e
-  // produtor passam pelo mesmo GET. A API ainda documenta um ramo "acervo
-  // inteiro" para ADMIN em /eventos/gestao — a regra de negócio continua lá;
-  // o MCP não amplia a lista (não cai em repasses administrativos).
+  // guedder_meus_eventos: um GET só em /api/v3/eventos/gestao. Sem atalho de
+  // repasses e sem filtro local por vendedorId/papel — isso seria heurística
+  // frágil (ADMIN+GERENTE de terceiro sumiria, ou pior: inventaríamos vínculo).
+  //
+  // GAP (GUE-568 / review P1 do #22): o UNION da API tem três ramos — dono,
+  // permissao_adm (CHECKIN|GERENTE|SOCIO) e `isAdmin=true` (acervo inteiro).
+  // Não há query param nem operação alternativa que desligue o terceiro ramo
+  // (confirmado em guedder-api AbstractEventoRepository + openapi). Com ADMIN
+  // e só a página 1, eventos sem vínculo aparecem e os com vínculo podem ficar
+  // fora. Correção mínima proposta na API: `somenteVinculo=true` forçando
+  // isAdmin=false no UNION; o MCP passaria a mandar esse param.
   if (!PUBLIC_ONLY) {
     server.registerResource(
       "guedder_meus_eventos_schema",
@@ -1119,6 +1128,7 @@ function createMcpServer(caller?: Caller): McpServer {
       async (args: any) => {
         try {
           // page 1-based, como /api/v3/eventos e a própria gestao.
+          // Quando a API expuser `somenteVinculo`, mandar true aqui.
           const pagina: any = await apiGet("/api/v3/eventos/gestao", {
             query: { page: 1, page_size: args?.max_results, filtro: args?.filtro },
             auth: true,

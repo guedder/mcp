@@ -169,7 +169,7 @@ cada uma).
 | `guedder_listar_resumo_repasses_eventos` | ✅ ADMIN | `GET /api/v3/administrativo/repasses/eventos` (MCP: `max_results`, sempre página 0) |
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
 | `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/perfil` |
-| `guedder_meus_eventos` | ✅ | `GET /api/v3/eventos/gestao` (MCP: `max_results` → `page_size`, sempre página 1). Recorta para `{ eventos: [{ id, nome, dataInicio, dataFim, terminou }] }`. Eventos que a pessoa produz ou administra (SOCIO/GERENTE/CHECKIN); sem atalho de ADMIN via repasses. |
+| `guedder_meus_eventos` | ✅ | `GET /api/v3/eventos/gestao` (MCP: `max_results` → `page_size`, sempre página 1). Recorta para `{ eventos: [{ id, nome, dataInicio, dataFim, terminou }] }`. Para produtor/SOCIO/GERENTE/CHECKIN, a API restringe por vínculo. **Gap:** com papel `ADMIN` a API ainda devolve o acervo (documentado no OpenAPI); o MCP não filtra no cliente nem usa repasses. Pendente `somenteVinculo` na API. |
 | `guedder_ingressos_vendidos_periodo` | ✅ `vendas:read` | Pagina `GET /api/v1/metrica/{eventoId}/ultimas-vendas` (`sort=viewId.dataCompra,desc`) e soma por dia, até 31 dias em America/Sao_Paulo; dia sem linha = 0 |
 | `guedder_lotes_esgotados` | ✅ `vendas:read` | Pagina `GET /api/v1/lote/{eventoId}`; esgotado = `enabled && estoqueInicial - ingressosVendidos <= 0` (não `estoqueDisponivel`, que vem 0 em lote inativo) |
 | `guedder_cancelar_pedido` | ✅ `pedido:cancelar` | `POST /api/v3/pedidos/{pedidoId}/cancelamento` |

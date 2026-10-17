@@ -135,6 +135,7 @@ test("o handshake initialize traz instructions com o fluxo de uso", async () => 
     assert.match(instructions, /guedder_descobrir_eventos/);
     assert.match(instructions, /guedder_detalhes_evento/);
     assert.match(instructions, /guedder_meus_eventos/);
+    assert.match(instructions, /acervo inteiro|Limitação conhecida/i);
     assert.match(instructions, /404/);
     assert.match(instructions, /guedder:\/\/openapi\/v3/);
 

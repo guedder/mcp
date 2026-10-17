@@ -427,7 +427,7 @@ para o porquê de não ser reforma de `guedder_minhas_compras`).
 | `guedder_listar_resumo_repasses_eventos` | ✅ ADMIN | `GET /api/v3/administrativo/repasses/eventos` |
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
 | `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/perfil` |
-| `guedder_meus_eventos` | ✅ | `GET /api/v3/eventos/gestao` → recorte `{ id, nome, dataInicio, dataFim, terminou }`. Sem bypass de admin no MCP (não usa `/administrativo/repasses/eventos`). |
+| `guedder_meus_eventos` | ✅ | `GET /api/v3/eventos/gestao` → recorte `{ id, nome, dataInicio, dataFim, terminou }`. Sem atalho de repasses. **Gap ADMIN:** o UNION da API inclui ramo `isAdmin` (acervo inteiro); não há param/rota que o desligue — critério GUE-568 “ADMIN sem vínculo não vê” fica na API (`somenteVinculo` proposto). |
 | `guedder_ingressos_vendidos_periodo` | ✅ `vendas:read` | Pagina `GET /api/v1/metrica/{id}/ultimas-vendas?sort=viewId.dataCompra,desc` e soma `ingressosPagos` por dia (≤ 31 dias, America/Sao_Paulo; dia sem linha = 0) |
 | `guedder_lotes_esgotados` | ✅ `vendas:read` | Pagina `GET /api/v1/lote/{id}`; esgotado = `enabled && estoqueInicial - ingressosVendidos <= 0` |
 | `guedder_cancelar_pedido` | ✅ `pedido:cancelar` | `POST /api/v3/pedidos/{id}/cancelamento` |

@@ -3,8 +3,9 @@
  * próprios ou com papel SOCIO/GERENTE/CHECKIN — com id, nome, datas e se já
  * terminou. Primeiro passo de "vendi hoje" / "esgotou lote" / "crie um cupom".
  *
- * Não é a lista de repasses (ADMIN). Sem bypass de admin neste servidor: o
- * mesmo GET serve para todo caller autenticado.
+ * Não é a lista de repasses. O MCP não filtra vínculo no cliente: para ADMIN
+ * a API /eventos/gestao ainda pode devolver o acervo (gap documentado; falta
+ * `somenteVinculo` na API).
  */
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -121,4 +122,45 @@ test("no modo comprador a tool não existe", async () => {
   } finally {
     await client.close();
   }
+});
+
+/**
+ * Simula o que a API faz para ADMIN (ramo isAdmin do UNION): a 1ª página traz
+ * eventos sem vínculo e pode omitir os que a pessoa gerencia de verdade.
+ * O MCP NÃO deve inventar filtro por vendedorId (quebraria GERENTE) nem
+ * trocar para repasses — só repassa o recorte. Critério GUE-568 "ADMIN sem
+ * vínculo não vê" fica pendente de `somenteVinculo` na API.
+ */
+test("ADMIN (simulado pela API): eventos sem vínculo passam; MCP não filtra nem pagina além da 1", async () => {
+  const futuro = "2099-12-31T22:00:00Z";
+  await comApiFalsa(
+    () => ({
+      body: {
+        content: [
+          // Acervo da plataforma — sem vínculo com quem chama.
+          { id: "e-plataforma-1", nome: "Show alheio A", dataInicio: futuro, dataFim: futuro, vendedorId: "outro-1" },
+          { id: "e-plataforma-2", nome: "Show alheio B", dataInicio: futuro, dataFim: futuro, vendedorId: "outro-2" },
+          // O evento que o ADMIN de fato gerencia ficou fora desta página.
+        ],
+        page: { size: 2, number: 0, totalElements: 1688, totalPages: 844 },
+      },
+    }),
+    async (client, recebidos) => {
+      const schema = await client.readResource({ uri: "guedder://openapi/v3/tools/guedder_meus_eventos" });
+      const spec = JSON.parse(schema.contents[0].text);
+      const desc = spec.paths["/api/v3/eventos/gestao"].get.description;
+      assert.match(desc, /acervo inteiro/, "o contrato ainda documenta o ramo ADMIN");
+
+      const r = await chamar(client, { max_results: 2 });
+      assert.notEqual(r.isError, true, r.content?.[0]?.text);
+      const ids = r.structuredContent.result.eventos.map((e) => e.id);
+      assert.deepEqual(ids, ["e-plataforma-1", "e-plataforma-2"], "MCP não filtra vínculo no cliente");
+      assert.equal(recebidos.length, 1);
+      assert.equal(recebidos[0].url.pathname, "/api/v3/eventos/gestao");
+      assert.equal(recebidos[0].url.searchParams.get("page"), "1", "só a primeira página");
+      assert.equal(recebidos[0].url.searchParams.get("page_size"), "2");
+      assert.equal(recebidos[0].url.searchParams.get("somenteVinculo"), null, "param ainda não existe na API");
+      assert.ok(!recebidos.some((p) => /repasses|administrativo/.test(p.url.pathname)));
+    },
+  );
 });
