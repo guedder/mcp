@@ -683,9 +683,13 @@ Regras:
 - Com GUEDDER_MCP_PUBLIC_ONLY=1 (agentes de comprador) só guedder_descobrir_eventos, guedder_detalhes_evento e guedder_listar_categorias_evento ficam disponíveis. As demais (ingressos, compras, auditoria, administrativo) exigem um token Guedder e perfil compatível.
 
 Gestão de evento (para quem produz):
-- Ingressos vendidos num período (até 31 dias, dias em São Paulo; sem datas = hoje): guedder_ingressos_vendidos_periodo.
-- Lotes que esgotaram: guedder_lotes_esgotados.
-- Criar lote: guedder_criar_lote. Criar cupom: guedder_criar_cupom (lotes pelo NOME; sem lotes = todos).
+1. Ache o evento e o id entre os que a pessoa gerencia: guedder_meus_eventos
+   (dona do evento ou papel SOCIO/GERENTE/CHECKIN). Não usa a lista de
+   repasses administrativos — ADMIN sem vínculo com o evento não o vê aqui.
+2. Com o id: ingressos vendidos num período (até 31 dias, dias em São Paulo;
+   sem datas = hoje): guedder_ingressos_vendidos_periodo.
+3. Lotes que esgotaram: guedder_lotes_esgotados.
+4. Criar lote: guedder_criar_lote. Criar cupom: guedder_criar_cupom (lotes pelo NOME; sem lotes = todos).
 - Exemplos de pedidos e a tool de cada um: resource guedder://prompts-sugeridos.
 
 Escrita — guedder_cancelar_pedido, guedder_criar_lote, guedder_criar_cupom:
@@ -704,6 +708,7 @@ Dados pessoais (CPF, e-mail, telefone, código de ingresso, cartão) chegam como
  * qual tool atende cada um. Cada item aponta para uma tool que existe (o teste confere).
  */
 const PROMPTS_SUGERIDOS: { pedido: string; tool: string }[] = [
+  { pedido: "Quais são os meus eventos?", tool: "guedder_meus_eventos" },
   { pedido: "Quantos ingressos eu vendi hoje?", tool: "guedder_ingressos_vendidos_periodo" },
   { pedido: "Já esgotou algum lote? Se sim, quais?", tool: "guedder_lotes_esgotados" },
   { pedido: 'Crie um lote chamado "acesso vip" com limitação de 100 retiradas', tool: "guedder_criar_lote" },
@@ -719,7 +724,8 @@ function promptsSugeridosMarkdown(): string {
   return [
     "# Pedidos sugeridos",
     "",
-    "Exemplos do que quem produz evento pode pedir. Criar lote e cupom passam pela confirmação em duas fases.",
+    "Exemplos do que quem produz evento pode pedir. O primeiro item resolve o id do evento quando o pedido não o traz.",
+    "Criar lote e cupom passam pela confirmação em duas fases.",
     "",
     ...linhas,
     "",
@@ -1061,11 +1067,82 @@ function createMcpServer(caller?: Caller): McpServer {
     );
   }
 
-  // ── Gestão de evento (GUE-550) ─────────────────────────────────────────────
-  // Duas leituras e duas escritas para quem produz o evento. Quem decide se a
-  // pessoa PODE ver vendas ou criar lote neste evento é a API; aqui o portão é
-  // só o escopo (o que ela deixou o agente fazer) e, nas escritas, a confirmação.
+  // ── Gestão de evento (GUE-550 + GUE-568) ───────────────────────────────────
+  // Primeiro passo de quem produz: achar o evento entre os que gerencia.
+  // Depois: duas leituras e duas escritas. Quem decide se a pessoa PODE ver
+  // vendas ou criar lote neste evento é a API; aqui o portão é só o escopo
+  // (o que ela deixou o agente fazer) e, nas escritas, a confirmação.
+  //
+  // guedder_meus_eventos NÃO tem bypass de admin neste servidor: ADMIN e
+  // produtor passam pelo mesmo GET. A API ainda documenta um ramo "acervo
+  // inteiro" para ADMIN em /eventos/gestao — a regra de negócio continua lá;
+  // o MCP não amplia a lista (não cai em repasses administrativos).
   if (!PUBLIC_ONLY) {
+    server.registerResource(
+      "guedder_meus_eventos_schema",
+      "guedder://openapi/v3/tools/guedder_meus_eventos",
+      {
+        title: "Schema: Meus eventos",
+        description: "Operação listarEventosDeGestao; a tool devolve um recorte (id, nome, datas, terminou).",
+        mimeType: "application/json",
+      },
+      async (uri) => ({
+        contents: [{
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify(openApiOperation("listarEventosDeGestao"), null, 2),
+        }],
+      }),
+    );
+    server.registerTool(
+      "guedder_meus_eventos",
+      {
+        title: "Meus eventos (gestão)",
+        description:
+          "Lista os eventos que a pessoa logada gerencia: os que produz e os em que tem papel " +
+          "SOCIO, GERENTE ou CHECKIN. Devolve id, nome, dataInicio, dataFim e se já terminou. " +
+          "Use antes de vendas, lotes esgotados ou criar lote/cupom, quando o pedido não traz o id. " +
+          "Não é a lista administrativa de repasses. Schema: guedder://openapi/v3/tools/guedder_meus_eventos.",
+        inputSchema: {
+          filtro: z.string().optional().describe("Busca textual no nome, local ou descrição"),
+          max_results: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .default(50)
+            .describe("Máximo de eventos retornados; máximo 100"),
+        },
+        outputSchema: TOOL_OUTPUT_SCHEMA,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      },
+      async (args: any) => {
+        try {
+          // page 1-based, como /api/v3/eventos e a própria gestao.
+          const pagina: any = await apiGet("/api/v3/eventos/gestao", {
+            query: { page: 1, page_size: args?.max_results, filtro: args?.filtro },
+            auth: true,
+            caller,
+          });
+          const agora = Date.now();
+          const eventos = (pagina?.content ?? []).map((e: any) => {
+            const dataFim = e?.dataFim ?? null;
+            const fimMs = dataFim == null ? NaN : Date.parse(String(dataFim));
+            return {
+              id: e?.id,
+              nome: e?.nome,
+              dataInicio: e?.dataInicio ?? null,
+              dataFim,
+              terminou: Number.isFinite(fimMs) && fimMs < agora,
+            };
+          });
+          return ok({ eventos });
+        } catch (e: any) {
+          return falha(e);
+        }
+      },
+    );
+
     server.registerTool(
       "guedder_ingressos_vendidos_periodo",
       {
