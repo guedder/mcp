@@ -713,9 +713,23 @@ uso mudou de suporte interno só-leitura para atender usuário final com escrita
 registra o servidor como MCP bundlado, sem header estático: o fluxo de
 descoberta (RFC 8414/9728) e o handshake OAuth cuidam do login.
 
-**Produção ainda não existe.** O que está fixado é a audiência
-(`https://mcp.guedder.com/mcp`) e o fato de o resource server ser o mesmo
-identificador nos dois ambientes.
+**Produção (identity) já tem peças; o serviço ECS ainda não.** Verificado em
+`guedder/infra` (`guedder/identity/production/cognito.tf`):
+
+- Resource server `https://mcp.guedder.com/mcp` e app client `guedder-mcp-agent`
+  (público, PKCE, sem secret) **existem** em produção.
+- Escopos no RS de prod hoje: só `conta:read` e `pedido:cancelar` (staging já
+  tem também `vendas:read`, `lote:write`, `cupom:write`).
+- Callbacks de prod do `guedder-mcp-agent`: `http://localhost:6274/oauth/callback`
+  e `https://claude.ai/api/mcp/auth_callback`. Postman (`oauth.pstmn.io`) está
+  **só em staging** ([infra#399](https://github.com/guedder/infra/pull/399)).
+- Root Terraform do **serviço** MCP (`guedder/mcp/…`): só `staging` — não há
+  `guedder/mcp/production`.
+- A audiência continua a mesma nos dois ambientes (`https://mcp.guedder.com/mcp`);
+  quem separa é o issuer (o pool).
+
+Decisões de segurança **antes** de abrir para fora do piloto: ADR 0006
+(status: proposto) e §15.
 
 ---
 
@@ -751,22 +765,53 @@ seguinte.
 
 ## 15. Em aberto
 
-- **Produção.** Não há root Terraform nem app client de produção para o MCP; a
-  audiência já está escolhida, o resto não.
+### Produção — estado verificado (outubro/2026)
+
+Inventário no Terraform de identity (`guedder/infra`), não achismo. Detalhe e
+fontes na [ADR 0006](adr/0006-decisoes-de-seguranca-antes-do-piloto-em-prod.md).
+
+| Peça | Situação em prod |
+|---|---|
+| Audiência / RS `https://mcp.guedder.com/mcp` | Existe |
+| App client `guedder-mcp-agent` | Existe, **público** (PKCE, sem secret) |
+| Escopos no RS MCP | Só `conta:read`, `pedido:cancelar` (faltam `vendas:read`, `lote:write`, `cupom:write` que o código já exige em staging) |
+| Callbacks do agent | `localhost:6274/oauth/callback`, `claude.ai/api/mcp/auth_callback` |
+| Callback Postman | Só staging ([infra#399](https://github.com/guedder/infra/pull/399)) |
+| Callback bot WhatsApp | **Ausente** nos dois ambientes (URL ainda não definida) |
+| Root `guedder/mcp/production` (ECS/ALB/DNS) | **Não existe** |
+| IdP federado no client MCP | Só `COGNITO` (sem Google/Facebook em prod neste client) |
+
+### Decisões pendentes (HITL — GUE-569 / epic GUE-565)
+
+Status: **proposto** na ADR 0006. Sem aceite do Danilo, não implementar e não
+abrir issues filhas.
+
+1. **Client público vs confidencial** — o teto (ir direto ao `/authorize` do
+   Cognito e pular a tela de consent) é aceitável no primeiro piloto?
+   Recomendação da proposta: **sim, aceitar no piloto**; gatilho para fechar =
+   cliente de terceiro não confiável (molde `CheckinSessionTokenService`).
+2. **`vendas:read` nas leituras de venda antigas** —
+   `guedder_auditar_vendas_evento` e `guedder_resumo_vendas_evento` ainda não
+   exigem o escopo. Em prod ninguém conectou; janela barata. Recomendação:
+   **exigir antes do piloto**, na mesma ordem em que o RS de prod ganhar o
+   escopo.
+3. **Callbacks de prod** — manter Claude + Inspector; Postman em prod ou só
+   staging?; URL/ownership do callback do bot de WhatsApp (client compartilhado
+   vs dedicado).
+
+Cada decisão lista issues filhas na ADR 0006; **não criá-las** até o aceite.
+
+### Outros itens em aberto
+
 - **Despertar do staging.** Um cliente MCP não consegue acordar o serviço
   adormecido. Só se paga se o MCP passar a ser usado sem ninguém no front.
 - **Segredo dos HMACs em prod.** Resolvido em código
   (`GUEDDER_MCP_CONFIRM_SECRET`); falta o segredo no Secrets Manager e a env na
-  task, no root Terraform de prod.
+  task, no root Terraform de prod (quando existir).
 - **Consent central por evento** (PRD `oauth-consent-escopos-por-evento`). A
   tela daqui só ganhou os textos dos três escopos novos e vai ser substituída;
   hoje o escopo vale para todos os eventos que a pessoa alcança, e quem recorta
   por evento é a permissão da API.
-- **Escopo nas leituras de venda antigas.** `guedder_auditar_vendas_evento` e
-  `guedder_resumo_vendas_evento` continuam sem `vendas:read`: exigir agora
-  quebraria quem já conectou sem ele. Ligar junto com o consent central.
-- **Client confidencial e sessão emitida aqui.** É o que fecha os dois tetos da
-  tela de consent; gatilho é cliente de terceiro de fato não confiável.
 - **Escopos vs tools de staff/admin.** `conta:read` e `pedido:cancelar` são
   exigidos nas tools do comprador desde a ADR 0004. As tools de staff/admin
   (`buscar_ingressos_evento`, `get_lote`, o bloco financeiro) continuam sem
