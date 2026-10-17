@@ -425,12 +425,13 @@ para o porquê de não ser reforma de `guedder_minhas_compras`).
 | `guedder_minhas_compras` | ✅ `conta:read` | `GET /api/v3/compras` |
 | `guedder_status_da_compra` | ✅ `conta:read` | Agrega `GET /api/v3/ingressos` por `idPedido` |
 | `guedder_buscar_compras_evento` | ✅ | `GET /api/v2/compra/evento/{id}/extrato` |
-| `guedder_auditar_vendas_evento` | ✅ | `GET /api/v1/metrica/{id}/ultimas-vendas` |
-| `guedder_resumo_vendas_evento` | ✅ | `GET /api/v1/metrica/{id}/resumo-vendas` |
+| `guedder_auditar_vendas_evento` | ✅ `vendas:read` | `GET /api/v1/metrica/{id}/ultimas-vendas` |
+| `guedder_resumo_vendas_evento` | ✅ `vendas:read` | `GET /api/v1/metrica/{id}/resumo-vendas` |
 | `guedder_listar_integracoes_pagamento` | ✅ ADMIN | `GET /api/v1/administrativo/gateway-adquirentes` |
 | `guedder_listar_resumo_repasses_eventos` | ✅ ADMIN | `GET /api/v3/administrativo/repasses/eventos` |
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
 | `guedder_usuario_logado` | ✅ | `GET /api/v3/usuarios/perfil` |
+| `guedder_meus_eventos` | ✅ | `GET /api/v3/eventos/gestao` → `{ eventos, page, pageSize, totalElements, totalPages }`. Padrão: `sort=dataCriacao,desc`, `page_size=10`. Sem atalho de repasses. ADMIN ver o acervo é aceito se paginado e recente primeiro (sem `somenteVinculo`). |
 | `guedder_ingressos_vendidos_periodo` | ✅ `vendas:read` | Pagina `GET /api/v1/metrica/{id}/ultimas-vendas?sort=viewId.dataCompra,desc` e soma `ingressosPagos` por dia (≤ 31 dias, America/Sao_Paulo; dia sem linha = 0) |
 | `guedder_lotes_esgotados` | ✅ `vendas:read` | Pagina `GET /api/v1/lote/{id}`; esgotado = `enabled && estoqueInicial - ingressosVendidos <= 0` |
 | `guedder_cancelar_pedido` | ✅ `pedido:cancelar` | `POST /api/v3/pedidos/{id}/cancelamento` |
@@ -793,15 +794,18 @@ ADR 0006 — **aceito** (Danilo, 2026-10-17). Issues filhas listadas na ADR;
 1. **Client público vs confidencial** — **ACEITA**: PKCE público no piloto.
    Fechar o gate depois = confidencial **mais** (a) transação de consent no
    `/token` ou (b) callback upstream do MCP + code downstream.
-2. **`vendas:read` nas leituras de venda antigas** — **ACEITA**: exigir em
-   `guedder_auditar_vendas_evento` e `guedder_resumo_vendas_evento` antes do
-   piloto (ordem Cognito prod → código MCP).
+2. **`vendas:read` nas leituras de venda antigas** — **ACEITA** e
+   **implementada** em [#24](https://github.com/guedder/mcp/pull/24)
+   (`escopo` nas duas tools). RS Cognito de staging e produção já declaram o
+   escopo.
 3. **Callbacks de prod** — **ACEITA**: Claude.ai + localhost com porta/path
    fixos (Inspector, Codex, …); Postman só staging; WhatsApp/Telegram fora
    deste client (ADR 0007). Cognito não faz wildcard de redirect.
 
 Auth messenger (WhatsApp/Telegram via Hermes): ADR 0007 (**proposta**) —
-issues filhas listadas lá, sem criar.
+issues filhas listadas lá, sem criar. Fechar o gate de consent de verdade
+(pacote (a)/(b), não só confidencial+sessão) fica para quando houver cliente
+de terceiro não confiável — piloto permanece PKCE público.
 
 ### Outros itens em aberto
 

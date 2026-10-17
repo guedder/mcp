@@ -582,22 +582,25 @@ const TOOLS: Tool[] = [
     name: "guedder_auditar_vendas_evento",
     title: "Auditar vendas recentes do evento",
     description:
-      "Retorna as vendas recentes de um evento para auditoria operacional. Não é uma trilha de alterações do evento; requer permissão de leitura de vendas.",
+      "Retorna as vendas recentes de um evento para auditoria operacional. Não é uma trilha de alterações do evento; exige o escopo vendas:read e permissão sobre o evento.",
     openApiOperationId: "getContagemIngressosVendidos",
     inputSchema: {
       eventoId: UUID_,
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de vendas retornadas; máximo 100"),
     },
     auth: true,
+    escopo: "vendas:read",
     build: (a) => ({ path: `/api/v1/metrica/${enc(a.eventoId)}/ultimas-vendas`, query: { page: 0, size: a.max_results } }),
   },
   {
     name: "guedder_resumo_vendas_evento",
     title: "Resumo de vendas do evento",
-    description: "Agregados de vendas de um evento para gestão. Requer permissão de leitura de vendas.",
+    description:
+      "Agregados de vendas de um evento para gestão. Exige o escopo vendas:read e permissão sobre o evento.",
     openApiOperationId: "getResumoVendas",
     inputSchema: { eventoId: UUID_ },
     auth: true,
+    escopo: "vendas:read",
     build: (a) => ({ path: `/api/v1/metrica/${enc(a.eventoId)}/resumo-vendas` }),
   },
   {
@@ -683,9 +686,16 @@ Regras:
 - Com GUEDDER_MCP_PUBLIC_ONLY=1 (agentes de comprador) só guedder_descobrir_eventos, guedder_detalhes_evento e guedder_listar_categorias_evento ficam disponíveis. As demais (ingressos, compras, auditoria, administrativo) exigem um token Guedder e perfil compatível.
 
 Gestão de evento (para quem produz):
-- Ingressos vendidos num período (até 31 dias, dias em São Paulo; sem datas = hoje): guedder_ingressos_vendidos_periodo.
-- Lotes que esgotaram: guedder_lotes_esgotados.
-- Criar lote: guedder_criar_lote. Criar cupom: guedder_criar_cupom (lotes pelo NOME; sem lotes = todos).
+1. Ache o evento e o id entre os que a pessoa gerencia: guedder_meus_eventos
+   (dona do evento ou papel SOCIO/GERENTE/CHECKIN). Não use a lista de
+   repasses administrativos. Por padrão devolve os mais recentes (sort
+   dataCriacao,desc) com página pequena; peça página seguinte se precisar.
+   ADMIN da plataforma pode ver eventos além dos seus vínculos — ok, desde
+   que a lista venha paginada e recente primeiro.
+2. Com o id: ingressos vendidos num período (até 31 dias, dias em São Paulo;
+   sem datas = hoje): guedder_ingressos_vendidos_periodo.
+3. Lotes que esgotaram: guedder_lotes_esgotados.
+4. Criar lote: guedder_criar_lote. Criar cupom: guedder_criar_cupom (lotes pelo NOME; sem lotes = todos).
 - Exemplos de pedidos e a tool de cada um: resource guedder://prompts-sugeridos.
 
 Escrita — guedder_cancelar_pedido, guedder_criar_lote, guedder_criar_cupom:
@@ -704,6 +714,7 @@ Dados pessoais (CPF, e-mail, telefone, código de ingresso, cartão) chegam como
  * qual tool atende cada um. Cada item aponta para uma tool que existe (o teste confere).
  */
 const PROMPTS_SUGERIDOS: { pedido: string; tool: string }[] = [
+  { pedido: "Quais são os meus eventos?", tool: "guedder_meus_eventos" },
   { pedido: "Quantos ingressos eu vendi hoje?", tool: "guedder_ingressos_vendidos_periodo" },
   { pedido: "Já esgotou algum lote? Se sim, quais?", tool: "guedder_lotes_esgotados" },
   { pedido: 'Crie um lote chamado "acesso vip" com limitação de 100 retiradas', tool: "guedder_criar_lote" },
@@ -719,7 +730,8 @@ function promptsSugeridosMarkdown(): string {
   return [
     "# Pedidos sugeridos",
     "",
-    "Exemplos do que quem produz evento pode pedir. Criar lote e cupom passam pela confirmação em duas fases.",
+    "Exemplos do que quem produz evento pode pedir. O primeiro item resolve o id do evento quando o pedido não o traz.",
+    "Criar lote e cupom passam pela confirmação em duas fases.",
     "",
     ...linhas,
     "",
@@ -1061,11 +1073,106 @@ function createMcpServer(caller?: Caller): McpServer {
     );
   }
 
-  // ── Gestão de evento (GUE-550) ─────────────────────────────────────────────
-  // Duas leituras e duas escritas para quem produz o evento. Quem decide se a
-  // pessoa PODE ver vendas ou criar lote neste evento é a API; aqui o portão é
-  // só o escopo (o que ela deixou o agente fazer) e, nas escritas, a confirmação.
+  // ── Gestão de evento (GUE-550 + GUE-568) ───────────────────────────────────
+  // Primeiro passo de quem produz: achar o evento entre os que gerencia.
+  // Depois: duas leituras e duas escritas. Quem decide se a pessoa PODE ver
+  // vendas ou criar lote neste evento é a API; aqui o portão é só o escopo
+  // (o que ela deixou o agente fazer) e, nas escritas, a confirmação.
+  //
+  // guedder_meus_eventos: um GET só em /api/v3/eventos/gestao. Sem atalho de
+  // repasses e sem filtro local por vendedorId/papel — isso seria heurística
+  // frágil (ADMIN+GERENTE de terceiro sumiria, ou pior: inventaríamos vínculo).
+  //
+  // O UNION da API inclui ramo `isAdmin` (acervo). Decisão do Danilo (GUE-568
+  // follow-up): ver mais eventos como ADMIN não é problema, desde que a tool
+  // pagine e, por padrão, traga só os mais recentes (`sort=dataCriacao,desc`,
+  // `page_size` pequeno). Sem `somenteVinculo`.
   if (!PUBLIC_ONLY) {
+    server.registerResource(
+      "guedder_meus_eventos_schema",
+      "guedder://openapi/v3/tools/guedder_meus_eventos",
+      {
+        title: "Schema: Meus eventos",
+        description: "Operação listarEventosDeGestao; a tool devolve um recorte (id, nome, datas, terminou).",
+        mimeType: "application/json",
+      },
+      async (uri) => ({
+        contents: [{
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify(openApiOperation("listarEventosDeGestao"), null, 2),
+        }],
+      }),
+    );
+    server.registerTool(
+      "guedder_meus_eventos",
+      {
+        title: "Meus eventos (gestão)",
+        description:
+          "Lista os eventos que a pessoa logada gerencia: os que produz e os em que tem papel " +
+          "SOCIO, GERENTE ou CHECKIN. Devolve id, nome, dataInicio, dataFim e se já terminou, " +
+          "mais página/total para seguir paginando. Por padrão: os mais recentes " +
+          "(`dataCriacao,desc`) e poucas linhas. ADMIN da plataforma pode ver além dos " +
+          "vínculos — use página e filtro. Não é a lista de repasses. " +
+          "Schema: guedder://openapi/v3/tools/guedder_meus_eventos.",
+        inputSchema: {
+          filtro: z.string().optional().describe("Busca textual no nome, local ou descrição"),
+          page: z
+            .number()
+            .int()
+            .min(1)
+            .default(1)
+            .describe("Página 1-based; padrão 1"),
+          max_results: z
+            .number()
+            .int()
+            .min(1)
+            .max(50)
+            .default(10)
+            .describe("Itens por página; padrão 10, máximo 50"),
+        },
+        outputSchema: TOOL_OUTPUT_SCHEMA,
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      },
+      async (args: any) => {
+        try {
+          // page 1-based. sort fechado da API: só dataCriacao — "mais recentes".
+          const pagina: any = await apiGet("/api/v3/eventos/gestao", {
+            query: {
+              page: args?.page ?? 1,
+              page_size: args?.max_results ?? 10,
+              filtro: args?.filtro,
+              sort: "dataCriacao,desc",
+            },
+            auth: true,
+            caller,
+          });
+          const agora = Date.now();
+          const eventos = (pagina?.content ?? []).map((e: any) => {
+            const dataFim = e?.dataFim ?? null;
+            const fimMs = dataFim == null ? NaN : Date.parse(String(dataFim));
+            return {
+              id: e?.id,
+              nome: e?.nome,
+              dataInicio: e?.dataInicio ?? null,
+              dataFim,
+              terminou: Number.isFinite(fimMs) && fimMs < agora,
+            };
+          });
+          const meta = pagina?.page ?? {};
+          return ok({
+            eventos,
+            page: meta.number != null ? Number(meta.number) + 1 : (args?.page ?? 1),
+            pageSize: meta.size ?? args?.max_results ?? 10,
+            totalElements: meta.totalElements ?? eventos.length,
+            totalPages: meta.totalPages ?? 1,
+          });
+        } catch (e: any) {
+          return falha(e);
+        }
+      },
+    );
+
     server.registerTool(
       "guedder_ingressos_vendidos_periodo",
       {
@@ -1662,7 +1769,8 @@ const TEXTO_DO_ESCOPO: Record<string, string> = {
   "conta:read": "Ver seus ingressos, suas compras e seus dados de perfil",
   "pedido:cancelar":
     "Cancelar pedidos seus, o que devolve o valor pelo mesmo meio de pagamento. O agente vai pedir sua confirmação antes de cada cancelamento",
-  "vendas:read": "Ver vendas dos eventos que você gerencia: ingressos vendidos por período e lotes esgotados",
+  "vendas:read":
+    "Ver vendas dos eventos que você gerencia: resumo, auditoria de vendas recentes, ingressos vendidos por período e lotes esgotados",
   "lote:write":
     "Criar lotes de ingresso nos eventos que você gerencia. O agente vai pedir sua confirmação antes de cada criação",
   "cupom:write":
@@ -1688,9 +1796,8 @@ const TEXTO_DO_ESCOPO: Record<string, string> = {
  * compraria o que parece comprar, porque a tela é pública e o cliente pode
  * buscá-la para obter um nonce fresco. Isto eleva a barra de "somar um
  * parâmetro" para "buscar a tela e repetir a prova", e fecha o caso do cliente
- * que pula a tela por descuido. Fechar o caso do cliente deliberado é o mesmo
- * passo já registrado no `telaDeConsent`: client confidencial e sessão emitida
- * aqui.
+ * que pula a tela por descuido. Fechar o caso do cliente deliberado exige o
+ * pacote da ADR 0006 ((a) ou (b)) — confidencial + sessão sozinho não basta.
  */
 function provaDeConsent(pedido: URLSearchParams, deslocamento = 0): string {
   return hmacDeConsent(
@@ -1725,13 +1832,12 @@ function escaparHtml(valor: string): string {
  * (PKCE, sem secret), então um cliente malicioso que já tenha o client_id pode
  * ir direto ao /authorize do Cognito e pular esta tela. O que limita o estrago
  * continua sendo a lista de `callback_urls` do app client e os escopos que ele
- * permite.
+ * permite. PKCE público no piloto: ADR 0006 Decisão 1 (aceita).
  *
- * Fechar isso de verdade exige tornar o app client confidencial, com o secret
- * só neste servidor, e o MCP passar a emitir a sessão (o molde é o
- * `CheckinSessionTokenService`). É o passo seguinte quando aparecer um cliente
- * de terceiro de fato não confiável, e não vale o custo enquanto o cliente é o
- * plugin da própria Guedder.
+ * "Confidencial + sessão própria" NÃO fecha o bypass sozinho (Codex P1 /
+ * ADR 0006): o cliente ainda autoriza no Cognito e troca o code no /token
+ * deste servidor. Fechar de verdade exige também (a) transação de consent
+ * amarrada ao /token ou (b) callback upstream do MCP + code downstream.
  */
 function telaDeConsent(pedido: URLSearchParams, anunciados: string[], resource: string): string {
   // O valor do checkbox é o nome COMPLETO (é o que o Cognito entende no

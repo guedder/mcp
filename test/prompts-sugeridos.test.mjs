@@ -23,15 +23,17 @@ async function comServidor(env, fn) {
   }
 }
 
-test("os quatro pedidos sugeridos apontam para tools registradas", async () => {
+test("os pedidos sugeridos apontam para tools registradas e começam pelos meus eventos", async () => {
   await comServidor({ GUEDDER_BEARER_TOKEN: "token-de-teste" }, async (client) => {
     const { contents } = await client.readResource({ uri: "guedder://prompts-sugeridos" });
     const texto = contents[0].text;
     const citadas = [...texto.matchAll(/`(guedder_[a-z_]+)`/g)].map((m) => m[1]);
-    assert.equal(citadas.length, 4);
+    assert.equal(citadas.length, 5);
+    assert.equal(citadas[0], "guedder_meus_eventos");
 
     const registradas = new Set((await client.listTools()).tools.map((t) => t.name));
     for (const tool of citadas) assert.ok(registradas.has(tool), `${tool} não está registrada`);
+    assert.match(texto, /Quais são os meus eventos\?/);
     assert.match(texto, /Quantos ingressos eu vendi hoje\?/);
     assert.match(texto, /PROMO10/);
   });

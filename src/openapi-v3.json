@@ -13,24 +13,12 @@
   ],
   "tags": [
     {
-      "name": "Lote",
-      "description": "Lotes de ingressos disponíveis"
-    },
-    {
       "name": "Home",
       "description": "Destaques e layout dinâmico da home"
     },
     {
-      "name": "Evento",
-      "description": "Listagem e detalhes de eventos"
-    },
-    {
       "name": "Atracoes",
       "description": "Line-up e atrações do evento"
-    },
-    {
-      "name": "Reserva",
-      "description": "Semáforo de reserva de assento (hold temporário e mapa de status)"
     },
     {
       "name": "Usuario",
@@ -41,20 +29,32 @@
       "description": "Transferência de ingressos entre usuários"
     },
     {
-      "name": "Checkout",
-      "description": "Sessão de compra e orçamento"
-    },
-    {
-      "name": "Administrativo",
-      "description": "Operações restritas à administração da plataforma (role ADMIN)"
-    },
-    {
       "name": "Compra",
       "description": "Histórico de compras do usuário"
     },
     {
       "name": "Ingresso",
       "description": "Ingressos do usuário e check-in"
+    },
+    {
+      "name": "Lote",
+      "description": "Lotes de ingressos disponíveis"
+    },
+    {
+      "name": "Evento",
+      "description": "Listagem e detalhes de eventos"
+    },
+    {
+      "name": "Reserva",
+      "description": "Semáforo de reserva de assento (hold temporário e mapa de status)"
+    },
+    {
+      "name": "Checkout",
+      "description": "Sessão de compra e orçamento"
+    },
+    {
+      "name": "Administrativo",
+      "description": "Operações restritas à administração da plataforma (role ADMIN)"
     }
   ],
   "paths": {
@@ -1750,6 +1750,113 @@
           }
         }
       }
+    },
+    "/api/v3/eventos/gestao": {
+      "get": {
+        "tags": [
+          "Evento"
+        ],
+        "summary": "Lista os eventos que o usuário autenticado administra",
+        "description": "Lista os eventos sob gestão do usuário autenticado: os que ele produz, os que administra por permissão (CHECKIN, GERENTE, SOCIO) e, para administradores da plataforma, o acervo inteiro.  **Filtros dinâmicos (ADR-0019):** além dos params abaixo, aceita um `campo[operador]=valor` por filtro descrito em `GET /api/v3/eventos/gestao/filtros` — ver aquele endpoint para o catálogo completo (hoje: `statusEvento`). Deliberadamente NÃO declarado aqui campo a campo: um filtro novo no catálogo não pode exigir editar este contrato — é o ponto inteiro de descrever o filtro em vez de declará-lo.  **Carga reduzida de `localEvento`.** Esta rota é servida por uma projeção administrativa enxuta, então o `localEvento` de cada item vem com `name` preenchido a partir do texto livre do evento — não do cadastro estruturado de local — e SEM `id`, `lat`, `lng`, `placeId` e `formattedAddress`. Com `non_null` esses campos simplesmente não aparecem no JSON. Quem precisa do local estruturado deve ler `GET /api/v3/eventos/{eventoId}` ou `GET /api/v3/eventos`, que passam a entidade inteira. A projeção é deliberada: é o que faz esta listagem custar 3 queries fixas em vez de uma por linha.  Legado: `GET /api/v2/evento/meus_eventos` ",
+        "operationId": "listarEventosDeGestao",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Número da página dos resultados (1-based).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 1,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "Registros por página.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "filtro",
+            "in": "query",
+            "description": "Busca textual livre. Varre o nome do evento, o local, o nome do local e a descrição do evento. ",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Ordenação, no formato Spring `campo,direcao` — por exemplo `dataCriacao,desc`. Vocabulário FECHADO: só `dataCriacao` (ou `data_criacao`) é aceito, e campo fora dele é 400, não silêncio. A direção também: `asc` ou `desc` (omitida, vale `asc`); qualquer outra coisa é 400 em vez de virar `asc` calado, porque quem escreve `dataCriacao,descendente` receberia a lista exatamente ao contrário do que pediu, sem nenhum sinal. Formato malformado (campo vazio, vírgula sobrando) idem. A busca de ids é SQL nativo (UNION da GUE-193, e JPQL não suporta UNION), então o `ORDER BY` é texto concatenado e nome de campo vindo do cliente nunca pode chegar até lá — `OrdenacaoMeusEventos` é a fronteira. Omitido, vale o padrão da tela: vigentes antes de encerrados, depois os que encerraram há menos tempo, depois `dataInicio` ascendente. ",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista paginada de eventos sob gestão",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEvento"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagedEvento"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Requisição inválida — parâmetros ausentes ou erros de validação.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InlineObject"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InlineObject"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -3232,6 +3339,45 @@
           "totalRepassado",
           "totalVendido"
         ]
+      },
+      "InlineObject": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://api.guedder.com/problems/not-found"
+          },
+          "title": {
+            "type": "string",
+            "example": "Not Found"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "example": 404
+          },
+          "detail": {
+            "type": "string",
+            "example": "Evento com id 'abc123' não encontrado."
+          },
+          "instance": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://api.guedder.com/api/v3/eventos/abc123"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Instante de auditoria em UTC — renderizar no fuso do dispositivo. "
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiFieldError"
+            }
+          }
+        }
       }
     }
   }

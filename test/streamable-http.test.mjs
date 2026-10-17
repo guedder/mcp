@@ -36,11 +36,11 @@ test("expõe ferramentas via Streamable HTTP stateless em /mcp", async () => {
     const json = body.match(/^data: (.+)$/m)?.[1] ?? body;
     const payload = JSON.parse(json);
     // 12 tools genéricas de leitura + descobrir_eventos + detalhes_evento +
-    // status_da_compra (compostas) + cancelar_pedido (escrita) + as 4 de gestão
-    // de evento (ingressos_vendidos_periodo, lotes_esgotados, criar_lote,
-    // criar_cupom). rastrear_compra não conta aqui: exige GUEDDER_MCP_LOG_GROUPS,
-    // ausente neste teste.
-    assert.equal(payload.result.tools.length, 20);
+    // status_da_compra (compostas) + cancelar_pedido (escrita) + as 5 de gestão
+    // de evento (meus_eventos, ingressos_vendidos_periodo, lotes_esgotados,
+    // criar_lote, criar_cupom). rastrear_compra não conta aqui: exige
+    // GUEDDER_MCP_LOG_GROUPS, ausente neste teste.
+    assert.equal(payload.result.tools.length, 21);
     assert.equal(payload.result.tools[0].annotations.readOnlyHint, true);
     assert.equal(payload.result.tools[0].annotations.destructiveHint, false);
     assert.equal(payload.result.tools[0].annotations.idempotentHint, true);
@@ -60,6 +60,12 @@ test("expõe ferramentas via Streamable HTTP stateless em /mcp", async () => {
       assert.equal(tool.inputSchema.properties.page, undefined, `${name} must not expose page`);
       assert.equal(tool.inputSchema.properties.size, undefined, `${name} must not expose size`);
     }
+    // meus_eventos pagina de propósito (ADMIN no acervo): page + max_results pequeno.
+    const meus = payload.result.tools.find((item) => item.name === "guedder_meus_eventos");
+    assert.ok(meus, "missing guedder_meus_eventos");
+    assert.ok(meus.inputSchema.properties.max_results);
+    assert.ok(meus.inputSchema.properties.page, "guedder_meus_eventos must expose page");
+    assert.equal(meus.inputSchema.properties.size, undefined);
   } finally {
     process.kill();
     await new Promise((resolve) => process.once("exit", resolve));
@@ -133,6 +139,8 @@ test("o handshake initialize traz instructions com o fluxo de uso", async () => 
     assert.ok(instructions && instructions.length > 200, "instructions ausente ou curto demais");
     assert.match(instructions, /guedder_descobrir_eventos/);
     assert.match(instructions, /guedder_detalhes_evento/);
+    assert.match(instructions, /guedder_meus_eventos/);
+    assert.match(instructions, /mais recentes|dataCriacao|paginad/i);
     assert.match(instructions, /404/);
     assert.match(instructions, /guedder:\/\/openapi\/v3/);
 
