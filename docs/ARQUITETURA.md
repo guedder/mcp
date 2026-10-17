@@ -790,22 +790,19 @@ fontes na [ADR 0006](adr/0006-decisoes-de-seguranca-antes-do-piloto-em-prod.md).
 Status: **proposto** na ADR 0006. Sem aceite do Danilo, não implementar e não
 abrir issues filhas.
 
-1. **Client público vs confidencial** — o teto (ir direto ao `/authorize` do
-   Cognito e pular a tela de consent) é aceitável no primeiro piloto?
-   Recomendação da proposta: **sim, manter PKCE público no piloto**. Fechar o
-   gate depois exige confidencial **mais** transação de consent no `/token`
-   **ou** callback upstream do MCP + code downstream — só “confidencial +
-   sessão” não basta (ADR 0006, Decisão 1).
-2. **`vendas:read` nas leituras de venda antigas** —
-   `guedder_auditar_vendas_evento` e `guedder_resumo_vendas_evento` ainda não
-   exigem o escopo. Em prod ninguém conectou; janela barata. Recomendação:
-   **exigir antes do piloto**, na mesma ordem em que o RS de prod ganhar o
-   escopo.
-3. **Callbacks de prod** — manter Claude + Inspector; Postman em prod ou só
-   staging?; URL/ownership do callback do bot de WhatsApp (client compartilhado
-   vs dedicado).
+1. **Client público vs confidencial** — **ACEITA** (Danilo, 2026-10-17): PKCE
+   público no piloto. Fechar o gate depois exige confidencial **mais**
+   transação de consent no `/token` **ou** callback upstream do MCP + code
+   downstream (ADR 0006).
+2. **`vendas:read` nas leituras de venda antigas** — ainda proposta. Em prod
+   ninguém conectou; janela barata. Recomendação: exigir antes do piloto.
+3. **Callbacks de prod** — ainda proposta (Claude + Inspector hoje; Postman só
+   staging). **WhatsApp/Telegram:** desenho em ADR 0007 (proposta) — client
+   messenger dedicado, não misturar no `guedder-mcp-agent`.
 
 Cada decisão lista issues filhas na ADR 0006; **não criá-las** até o aceite.
+Auth messenger (WhatsApp/Telegram via Hermes): ADR 0007 (proposta) — issues
+filhas listadas lá, sem criar.
 
 ### Outros itens em aberto
 

@@ -1,14 +1,15 @@
 # ADR 0006 — Decisões de segurança antes de abrir o MCP para fora do piloto
 
-**Status**: Proposto — 2026-10-17 (HITL: decisões do Danilo — GUE-569, epic GUE-565)
+**Status**: Parcialmente aceito — 2026-10-17 (HITL: Danilo — GUE-569, epic GUE-565)
 **Depende de**: ADR 0002 (tela de consent + teto do client público), ADR 0005 (hospedagem em staging)
+**Relacionado**: ADR 0007 (auth MCP via WhatsApp/Telegram — proposta)
 **Terraform verificado**: `guedder/infra` @ `guedder/identity/production/cognito.tf`,
 `guedder/identity/staging/cognito.tf`, `guedder/identity/staging/staging.tfvars`,
 [guedder/infra#399](https://github.com/guedder/infra/pull/399)
 
-> Este ADR é **proposta**. Nenhuma das três decisões abaixo está aceita.
-> Implementação e issues filhas ficam para depois do aceite. O agente que
-> preparou a proposta **não** cria issues nem muda código/infra.
+> Decisão **1 aceita** (PKCE público no piloto). Decisões **2 e 3 ainda
+> propostas**. Implementação e issues filhas só depois do aceite de cada uma.
+> O agente que preparou isto **não** cria issues nem muda código/infra de auth.
 
 ## Contexto
 
@@ -39,6 +40,13 @@ passa no `portaoDeEscopo` das tools que o exigem.
 ---
 
 ## Decisão 1 — Client público (PKCE) ou confidencial?
+
+**Status**: Aceita — 2026-10-17 (Danilo)
+
+**Decisão**: manter o `guedder-mcp-agent` **público (PKCE)** no primeiro piloto.
+O teto (bypass da tela de consent via `/authorize` do Cognito) é aceito neste
+recorte. Fechar o gate de verdade fica para depois, e exige o pacote da
+correção Codex ((a) ou (b) abaixo) — não só “confidencial + sessão”.
 
 ### Problema
 
@@ -90,31 +98,24 @@ Sem (a) ou (b), “confidencial + sessão” é custo pago sem fechar o gate.
 | Superfície de ataque | Limitada pela allowlist de `callback_urls` e pelos escopos do app client | Secret no servidor + mesma allowlist; bypass de consent intacto | Allowlist pode encolher (em (b), só o MCP); secret e estado de consent passam a ser críticos |
 | Quando se paga | Piloto com clientes allowlisted | Nunca — não compra o que parece comprar | Quando existir cliente de terceiro não confiável **e** houver orçamento para (a) ou (b) |
 
-### Recomendação (proposta)
+### Recomendação → aceite
 
-**Manter o client público (PKCE) no primeiro piloto** — continua coerente.
+A recomendação de manter PKCE público no piloto foi **aprovada pelo Danilo**.
+Motivos que sustentaram o aceite (inalterados):
 
-Motivos:
+1. Consumidores do piloto: Claude.ai + plugin Guedder; freio = allowlist de
+   `callback_urls` + escopos.
+2. “Confidencial + sessão” sem (a)/(b) não fecha o bypass (achado Codex P1).
+3. Fechar de verdade é redesign OAuth, desproporcional ao piloto.
+4. Gatilho para reabrir: cliente de terceiro não confiável / callback
+   imprevisível — e aí escolher (a) ou (b) de propósito.
 
-1. Os consumidores do piloto são Claude.ai (callback allowlisted) e o plugin
-   da própria Guedder. O freio real hoje é a allowlist de `callback_urls` +
-   escopos do app client, não a tela de consent como barreira criptográfica.
-2. “Virar confidencial + emitir sessão” **sem** (a) ou (b) atrasa GUE-565 e
-   **não** fecha o bypass — é o custo errado na hora errada.
-3. Fechar de verdade exige redesign OAuth ((a) ou (b)), não só um secret no
-   Secrets Manager. Esse pacote é desproporcional ao perfil de ameaça do
-   piloto (ninguém conectado em prod; serviço ECS de prod ainda não existe).
-4. O gatilho para reabrir continua: **cliente de terceiro não confiável** ou
-   callback imprevisível — e aí a issue filha tem que escolher (a) ou (b)
-   explicitamente, não só “tornar confidencial”.
+Auth de **WhatsApp/Telegram** (Hermes) **não** entra neste client público do
+Claude: ver ADR 0007 (client messenger dedicado).
 
-O teto permanece escrito na §15 e neste ADR. A frase da ADR 0002 sobre “o que
-fecharia os dois tetos” fica **incompleta** até essa ADR ser emendada; a
-correção normativa para o piloto é esta (0006).
+### Issues filhas sugeridas (não criar agora)
 
-### Issues filhas que esta decisão geraria (não criar agora)
-
-Se **aceitar público no piloto** (recomendado):
+Do aceite do piloto (follow-ups baratos):
 
 - *(docs/ops)* Runbook de prod: teto aceito; callback novo = revisão de
   segurança; não tratar “confidencial sem (a)/(b)” como endurecimento.
@@ -123,8 +124,7 @@ Se **aceitar público no piloto** (recomendado):
 - *(opcional, infra)* Métrica de `/authorize` do Cognito sem passar pelo host
   do MCP — sinal de bypass; não bloqueia piloto.
 
-Se **fechar o gate de consent de verdade** (depois do piloto ou se o Danilo
-antecipar):
+Se **fechar o gate de consent de verdade** (depois do piloto):
 
 - *(mcp, desenho)* Escolher **(a) transação de consent amarrada ao `/token`**
   ou **(b) callback upstream do MCP + code downstream** — ADR de implementação
@@ -266,11 +266,9 @@ decisão 1.
    basta para o cliente MCP do Postman. Reabrir se a engenharia precisar
    validar discovery/OAuth **contra o issuer de produção** sem espelho em
    staging.
-3. **Bot de WhatsApp: decidir URL e ownership antes do go-live do canal.**
-   Sem URL concreta não há o que colocar no Terraform. Se o bot for
-   first-party e confidencial (secret no servidor do bot), avaliar client
-   **separado** do `guedder-mcp-agent` — misturar callback de bot no client
-   do Claude amplia o alvo do client que a pessoa autoriza no plugin.
+3. **WhatsApp/Telegram (Hermes):** não misturar callback no
+   `guedder-mcp-agent`. Desenho e recomendação na **ADR 0007** (proposta):
+   client Cognito dedicado + link de vínculo + callback no Hermes.
 
 ### Issues filhas que esta decisão geraria (não criar agora)
 
