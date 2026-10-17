@@ -360,7 +360,7 @@ outra sessão (molde `CheckinSessionTokenService`) **não fecha** o bypass sozin
 trocar o `code` no `/token` público deste servidor, que acrescentaria o secret.
 Fechar de verdade exige também amarrar a troca de token a uma transação de
 consent no servidor, ou usar callback upstream próprio do MCP e emitir um code
-downstream separado. Detalhe e decisão de piloto: ADR 0006 (proposta).
+downstream separado. Detalhe e decisão de piloto: ADR 0006 (aceito).
 
 ---
 

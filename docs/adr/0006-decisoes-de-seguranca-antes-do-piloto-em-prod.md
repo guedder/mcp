@@ -1,15 +1,15 @@
 # ADR 0006 — Decisões de segurança antes de abrir o MCP para fora do piloto
 
-**Status**: Parcialmente aceito — 2026-10-17 (HITL: Danilo — GUE-569, epic GUE-565)
+**Status**: Aceito — 2026-10-17 (HITL: Danilo — GUE-569, epic GUE-565)
 **Depende de**: ADR 0002 (tela de consent + teto do client público), ADR 0005 (hospedagem em staging)
 **Relacionado**: ADR 0007 (auth MCP via WhatsApp/Telegram — proposta)
 **Terraform verificado**: `guedder/infra` @ `guedder/identity/production/cognito.tf`,
 `guedder/identity/staging/cognito.tf`, `guedder/identity/staging/staging.tfvars`,
 [guedder/infra#399](https://github.com/guedder/infra/pull/399)
 
-> Decisão **1 aceita** (PKCE público no piloto). Decisões **2 e 3 ainda
-> propostas**. Implementação e issues filhas só depois do aceite de cada uma.
-> O agente que preparou isto **não** cria issues nem muda código/infra de auth.
+> As três decisões deste ADR foram **aceitas** (Danilo, 2026-10-17).
+> Implementação e issues filhas listadas abaixo — **não criadas** neste PR.
+> WhatsApp/Telegram continuam na ADR 0007 (proposta separada).
 
 ## Contexto
 
@@ -143,6 +143,12 @@ Se **fechar o gate de consent de verdade** (depois do piloto):
 
 ## Decisão 2 — Exigir `vendas:read` em `guedder_auditar_vendas_evento` e `guedder_resumo_vendas_evento`?
 
+**Status**: Aceita — 2026-10-17 (Danilo)
+
+**Decisão**: exigir `vendas:read` nas duas tools antigas **antes** do piloto em
+prod, na ordem Cognito prod (escopo no RS/app client) → código MCP → abrir
+conexão. Não esperar o consent central por evento.
+
 ### Problema
 
 As tools novas de vendas (`guedder_ingressos_vendidos_periodo`,
@@ -192,37 +198,42 @@ que o serviço subir com Cognito ligado. Ordem segura: escopo no Cognito de prod
 | Custo | Uma linha por tool + teste + tfvars/cognito de prod | Zero agora; custo sobe quando houver token em circulação |
 | Relação com consent central | Independente — escopo global por enquanto; consent por evento é outro PRD | Acoplar os dois atrasa o fechamento barato |
 
-### Recomendação (proposta)
+### Recomendação → aceite
 
-**Exigir `vendas:read` nas duas tools antigas antes de abrir o piloto em
-prod**, na mesma janela em que o resource server de produção ganhar
-`vendas:read` (e, se o piloto incluir escrita de lote/cupom, `lote:write` /
-`cupom:write`).
+A recomendação de exigir `vendas:read` antes do piloto foi **aprovada pelo
+Danilo**. Consent central por evento continua eixo separado (onde o escopo
+recorta); este item fecha *se* o agente pode ler vendas.
 
-Não esperar o consent central por evento: aquele PRD troca *onde* o escopo
-recorta; este item fecha *se* o agente pode ler vendas. São eixos diferentes.
+### Issues filhas decorrentes (não criar agora)
 
-### Issues filhas que esta decisão geraria (não criar agora)
-
-Se **exigir** (recomendado):
-
+- *(infra/identity)* Somar `vendas:read` (e, se o piloto incluir escrita,
+  `lote:write` / `cupom:write`) ao `aws_cognito_resource_server.mcp` de
+  **produção** e garantir que o `guedder-mcp-agent` de prod as liste em
+  `allowed_oauth_scopes` (em prod o client usa `scope_identifiers` — conferir
+  plan: escopo novo no RS precisa aparecer no client).
 - *(mcp)* `escopo: "vendas:read"` em `guedder_auditar_vendas_evento` e
-  `guedder_resumo_vendas_evento`; alinhar `TEXTO_DO_ESCOPO`; teste de negação;
-  docs §8/README.
-- *(infra/identity)* Somar `vendas:read` (e os write do piloto) ao
-  `aws_cognito_resource_server.mcp` de **produção** e ao
-  `allowed_oauth_scopes` do `guedder-mcp-agent` (hoje o client concatena os
-  scopes do RS — escopo novo no RS entra no client se o HCL estiver montado
-  como em staging; em prod o client usa `scope_identifiers` — conferir plan).
-
-Se **adiar**:
-
-- *(mcp)* Issue de follow-up amarrada ao PRD de consent central, com nota de
-  que a janela barata de prod terá fechado.
+  `guedder_resumo_vendas_evento`; alinhar `TEXTO_DO_ESCOPO` (incluir
+  auditoria/resumo); teste de negação (padrão `comprador.test.mjs`); docs
+  §8/README.
+- *(ops)* Ordem de deploy: Cognito prod com o escopo **antes** do MCP que
+  exige — senão leitura de venda 403 assim que o serviço subir.
 
 ---
 
 ## Decisão 3 — Callbacks do client de produção
+
+**Status**: Aceita — 2026-10-17 (Danilo)
+
+**Decisão**:
+
+1. **Manter** em prod: `https://claude.ai/api/mcp/auth_callback` e callbacks
+   **localhost** para clientes locais (Inspector já em
+   `http://localhost:6274/oauth/callback`; **Codex** e outros clientes locais
+   no mesmo espírito — ver cuidados abaixo).
+2. **Postman** (`oauth.pstmn.io`): **só staging** (infra#399). Não copiar para
+   prod no piloto.
+3. **WhatsApp/Telegram**: **não** no `guedder-mcp-agent` — ADR 0007 (client
+   messenger dedicado).
 
 ### Problema
 
@@ -258,44 +269,54 @@ decisão 1.
 | Postman (`oauth.pstmn.io`) | Engenharia testa o discovery de prod sem staging | Superfície menor; staging já cobre o caso (infra#399) |
 | Bot WhatsApp (URL a definir) | Produtor fala com o agente no canal real | Bot não autentica em prod até existir URL + PR de identity |
 
-### Recomendação (proposta)
+### Recomendação → aceite
 
-1. **Manter** `claude.ai` e, por enquanto, `localhost:6274` no piloto (já
-   estão; rever se localhost em prod continua desejável depois do piloto).
-2. **Não copiar Postman para prod no dia 1** — o #399 foi explícito; staging
-   basta para o cliente MCP do Postman. Reabrir se a engenharia precisar
-   validar discovery/OAuth **contra o issuer de produção** sem espelho em
-   staging.
-3. **WhatsApp/Telegram (Hermes):** não misturar callback no
-   `guedder-mcp-agent`. Desenho e recomendação na **ADR 0007** (proposta):
-   client Cognito dedicado + link de vínculo + callback no Hermes.
+A recomendação (Claude + localhost no piloto; Postman só staging; messenger
+fora deste client) foi **aprovada pelo Danilo**, com o acréscimo explícito de
+que **localhost serve a clientes locais como o Codex**, não só ao Inspector.
 
-### Issues filhas que esta decisão geraria (não criar agora)
+### Cuidados com callbacks `localhost` (obrigatório registrar)
 
-- *(infra/identity)* Se Postman em prod: espelhar o #399 no root de production
-  (tfvars ou HCL literal, conforme o root estiver modelado).
-- *(produto + infra)* Se bot WhatsApp: definir URL de callback (e se é o mesmo
-  client ou um app client dedicado); PR em `identity/production`.
-- *(mcp / bot)* Configurar o cliente OAuth do bot com esse `redirect_uri` e o
-  discovery do host de prod (quando o serviço existir).
-- *(opcional, segurança)* Remover `localhost:6274` de prod após o piloto, se
-  o debug local deixar de ser requisito.
+O Cognito compara `redirect_uri` por **igualdade exata** (scheme + host +
+porta + path). Consequências práticas do aceite:
+
+| Regra | Por quê |
+|---|---|
+| **Sem wildcard** | Cognito **não** aceita `http://localhost:*/…` nem glob. Cada porta/path é uma entrada na allowlist. |
+| **Porta e path fixos por cliente** | Inspector hoje: `http://localhost:6274/oauth/callback`. Codex (ou outro cliente local) só funciona se a URL **exata** que ele usa estiver listada — descobrir a URL do cliente e somar em PR de identity, não adivinhar. |
+| **HTTP em localhost** | Aceito pelo Cognito para loopback; não usar `http://` em host público. |
+| **Risco residual** | Com client público + PKCE, um `code` entregue a `localhost` só completa o fluxo com o `code_verifier` de quem iniciou. Ainda assim cada URL localhost a mais é superfície: só adicionar a que um cliente real do time usa, com PR revisado. |
+| **Não é DCR** | Porta sorteada a cada run (= redirect imprevisível) **não** cabe nesta allowlist; exige client/registro dinâmico (fora do piloto). |
+
+Somar um localhost novo ≠ “liberar todo localhost”: é uma linha literal no
+Terraform, igual ao `6274` atual.
+
+### Issues filhas decorrentes (não criar agora)
+
+- *(infra/identity)* Inventariar a `redirect_uri` **exata** do Codex (e de
+  qualquer outro cliente local do piloto); se ≠ `6274/oauth/callback`, PR
+  adicionando a URL literal em `identity/production` (e staging se fizer
+  falta). Sem wildcard.
+- *(docs/ops)* Runbook: “callback localhost novo = URL fixa + PR”; Postman
+  permanece só staging; não misturar Hermes neste client.
+- *(adr/produto)* WhatsApp/Telegram: seguir ADR 0007 (client dedicado) —
+  issues filhas listadas lá, não aqui.
+- *(não fazer no piloto)* Espelhar Postman em prod; abrir allowlist para
+  portas dinâmicas.
 
 ---
 
-## Consequências (quando as três forem aceitas)
+## Consequências (as três aceitas)
 
-- A §15 deixa de mentir sobre "não há app client de produção" e passa a listar
-  o inventário + as três decisões com status.
-- O piloto em prod pode seguir com client público **desde que** a allowlist de
-  callbacks e o conjunto de escopos do RS/app client sejam tratados como
-  superfície de segurança (toda adição = PR revisado). Não confundir
-  “confidencial + sessão” com fechamento do gate de consent — falta (a) ou (b).
-- O buraco de `vendas:read` nas tools antigas deixa de atravessar a porta de
-  prod, se a decisão 2 for aceita na ordem Cognito → código.
+- A §15 reflete inventário + decisões aceitas; issues de implementação
+  ficam listadas, não abertas neste PR.
+- Piloto em prod: client público (Decisão 1); allowlist de callbacks =
+  Claude + localhosts **literais** necessários (Decisão 3); escopos de
+  venda coerentes nas quatro tools (Decisão 2), na ordem Cognito → MCP.
+- Não confundir “confidencial + sessão” com fechamento do gate de consent —
+  falta (a) ou (b) da Decisão 1.
 - Nada deste ADR implementa hospedagem ECS de prod, segredo HMAC em Secrets
-  Manager, nem IdP federado em produção — esses continuam itens em aberto
-  separados na §15 / epic GUE-565.
+  Manager, IdP federado em produção, nem o fluxo Hermes (ADR 0007).
 
 ## Alternativas transversais consideradas
 
