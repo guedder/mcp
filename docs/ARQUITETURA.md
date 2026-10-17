@@ -354,10 +354,13 @@ autorização, não barreira criptográfica:
    `/authorize` do Cognito, contornando este servidor.
 
 O que limita o estrago continua sendo a lista de escopos do app client e a de
-`callback_urls`. **Atenção:** confidencial + sessão própria **não** fecha o
-bypass sozinho (authorize Cognito → `/token` do MCP). Fechar de verdade exige
-também (a) transação de consent no `/token` ou (b) callback upstream do MCP +
-code downstream — ADR 0006.
+`callback_urls`. **Atenção:** tornar o app client confidencial e o MCP emitir
+outra sessão (molde `CheckinSessionTokenService`) **não fecha** o bypass sozinho
+— o cliente ainda pode ir ao `/authorize` do Cognito (que não exige secret) e
+trocar o `code` no `/token` público deste servidor, que acrescentaria o secret.
+Fechar de verdade exige também amarrar a troca de token a uma transação de
+consent no servidor, ou usar callback upstream próprio do MCP e emitir um code
+downstream separado. Detalhe e decisão de piloto: ADR 0006 (aceito).
 
 ---
 
@@ -715,9 +718,23 @@ uso mudou de suporte interno só-leitura para atender usuário final com escrita
 registra o servidor como MCP bundlado, sem header estático: o fluxo de
 descoberta (RFC 8414/9728) e o handshake OAuth cuidam do login.
 
-**Produção ainda não existe.** O que está fixado é a audiência
-(`https://mcp.guedder.com/mcp`) e o fato de o resource server ser o mesmo
-identificador nos dois ambientes.
+**Produção (identity) já tem peças; o serviço ECS ainda não.** Verificado em
+`guedder/infra` (`guedder/identity/production/cognito.tf`):
+
+- Resource server `https://mcp.guedder.com/mcp` e app client `guedder-mcp-agent`
+  (público, PKCE, sem secret) **existem** em produção.
+- Escopos no RS de prod hoje: só `conta:read` e `pedido:cancelar` (staging já
+  tem também `vendas:read`, `lote:write`, `cupom:write`).
+- Callbacks de prod do `guedder-mcp-agent`: `http://localhost:6274/oauth/callback`
+  e `https://claude.ai/api/mcp/auth_callback`. Postman (`oauth.pstmn.io`) está
+  **só em staging** ([infra#399](https://github.com/guedder/infra/pull/399)).
+- Root Terraform do **serviço** MCP (`guedder/mcp/…`): só `staging` — não há
+  `guedder/mcp/production`.
+- A audiência continua a mesma nos dois ambientes (`https://mcp.guedder.com/mcp`);
+  quem separa é o issuer (o pool).
+
+Decisões de segurança **antes** de abrir para fora do piloto: ADR 0006
+(status: proposto) e §15.
 
 ---
 
@@ -753,25 +770,54 @@ seguinte.
 
 ## 15. Em aberto
 
-- **Produção.** Não há root Terraform nem app client de produção para o MCP; a
-  audiência já está escolhida, o resto não.
+### Produção — estado verificado (outubro/2026)
+
+Inventário no Terraform de identity (`guedder/infra`), não achismo. Detalhe e
+fontes na [ADR 0006](adr/0006-decisoes-de-seguranca-antes-do-piloto-em-prod.md).
+
+| Peça | Situação em prod |
+|---|---|
+| Audiência / RS `https://mcp.guedder.com/mcp` | Existe |
+| App client `guedder-mcp-agent` | Existe, **público** (PKCE, sem secret) |
+| Escopos no RS MCP | `conta:read`, `pedido:cancelar`, `vendas:read`, `lote:write`, `cupom:write` (espelho de staging; verificado no HCL de prod) |
+| Callbacks do agent | `localhost:6274/oauth/callback`, `claude.ai/api/mcp/auth_callback` (+ outros localhost **literais** se Codex/cliente local precisar — Decisão 3 aceita; sem wildcard) |
+| Callback Postman | Só staging ([infra#399](https://github.com/guedder/infra/pull/399)) — Decisão 3 aceita |
+| Callback WhatsApp/Telegram | **Ausente** neste client → ADR 0007 |
+| Root `guedder/mcp/production` (ECS/ALB/DNS) | **Não existe** |
+| IdP federado no client MCP | Só `COGNITO` (sem Google/Facebook em prod neste client) |
+
+### Decisões de segurança do piloto (GUE-569 / epic GUE-565)
+
+ADR 0006 — **aceito** (Danilo, 2026-10-17). Issues filhas listadas na ADR;
+**não criadas** neste documento.
+
+1. **Client público vs confidencial** — **ACEITA**: PKCE público no piloto.
+   Fechar o gate depois = confidencial **mais** (a) transação de consent no
+   `/token` ou (b) callback upstream do MCP + code downstream.
+2. **`vendas:read` nas leituras de venda antigas** — **ACEITA** e
+   **implementada** em [#24](https://github.com/guedder/mcp/pull/24)
+   (`escopo` nas duas tools). RS Cognito de staging e produção já declaram o
+   escopo.
+3. **Callbacks de prod** — **ACEITA**: Claude.ai + localhost com porta/path
+   fixos (Inspector, Codex, …); Postman só staging; WhatsApp/Telegram fora
+   deste client (ADR 0007). Cognito não faz wildcard de redirect.
+
+Auth messenger (WhatsApp/Telegram via Hermes): ADR 0007 (**proposta**) —
+issues filhas listadas lá, sem criar. Fechar o gate de consent de verdade
+(pacote (a)/(b), não só confidencial+sessão) fica para quando houver cliente
+de terceiro não confiável — piloto permanece PKCE público.
+
+### Outros itens em aberto
+
 - **Despertar do staging.** Um cliente MCP não consegue acordar o serviço
   adormecido. Só se paga se o MCP passar a ser usado sem ninguém no front.
 - **Segredo dos HMACs em prod.** Resolvido em código
   (`GUEDDER_MCP_CONFIRM_SECRET`); falta o segredo no Secrets Manager e a env na
-  task, no root Terraform de prod.
+  task, no root Terraform de prod (quando existir).
 - **Consent central por evento** (PRD `oauth-consent-escopos-por-evento`). A
   tela daqui só ganhou os textos dos três escopos novos e vai ser substituída;
   hoje o escopo vale para todos os eventos que a pessoa alcança, e quem recorta
   por evento é a permissão da API.
-- **Escopo nas leituras de venda antigas.** Decisão 2 da ADR 0006 **aceita**;
-  implementação neste repo: `escopo: "vendas:read"` em
-  `guedder_auditar_vendas_evento` e `guedder_resumo_vendas_evento`. RS Cognito
-  de staging e produção já declaram o escopo (verificado em
-  `identity/*/cognito.tf`).
-- **Fechar o gate de consent de verdade.** Não é “só confidencial + sessão”
-  (ADR 0006 / Codex P1). Pacote (a) ou (b) quando houver cliente de terceiro
-  não confiável; piloto permanece PKCE público.
 - **Escopos vs tools de staff/admin.** `conta:read` e `pedido:cancelar` são
   exigidos nas tools do comprador desde a ADR 0004. As tools de staff/admin
   (`buscar_ingressos_evento`, `get_lote`, o bloco financeiro) continuam sem
