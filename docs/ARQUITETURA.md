@@ -778,31 +778,30 @@ fontes na [ADR 0006](adr/0006-decisoes-de-seguranca-antes-do-piloto-em-prod.md).
 |---|---|
 | Audiência / RS `https://mcp.guedder.com/mcp` | Existe |
 | App client `guedder-mcp-agent` | Existe, **público** (PKCE, sem secret) |
-| Escopos no RS MCP | Só `conta:read`, `pedido:cancelar` (faltam `vendas:read`, `lote:write`, `cupom:write` que o código já exige em staging) |
-| Callbacks do agent | `localhost:6274/oauth/callback`, `claude.ai/api/mcp/auth_callback` |
-| Callback Postman | Só staging ([infra#399](https://github.com/guedder/infra/pull/399)) |
-| Callback bot WhatsApp | **Ausente** nos dois ambientes (URL ainda não definida) |
+| Escopos no RS MCP | `conta:read`, `pedido:cancelar`, `vendas:read`, `lote:write`, `cupom:write` (espelho de staging; verificado no HCL de prod) |
+| Callbacks do agent | `localhost:6274/oauth/callback`, `claude.ai/api/mcp/auth_callback` (+ outros localhost **literais** se Codex/cliente local precisar — Decisão 3 aceita; sem wildcard) |
+| Callback Postman | Só staging ([infra#399](https://github.com/guedder/infra/pull/399)) — Decisão 3 aceita |
+| Callback WhatsApp/Telegram | **Ausente** neste client → ADR 0007 |
 | Root `guedder/mcp/production` (ECS/ALB/DNS) | **Não existe** |
 | IdP federado no client MCP | Só `COGNITO` (sem Google/Facebook em prod neste client) |
 
-### Decisões pendentes (HITL — GUE-569 / epic GUE-565)
+### Decisões de segurança do piloto (GUE-569 / epic GUE-565)
 
-Status: **proposto** na ADR 0006. Sem aceite do Danilo, não implementar e não
-abrir issues filhas.
+ADR 0006 — **aceito** (Danilo, 2026-10-17). Issues filhas listadas na ADR;
+**não criadas** neste documento.
 
-1. **Client público vs confidencial** — **ACEITA** (Danilo, 2026-10-17): PKCE
-   público no piloto. Fechar o gate depois exige confidencial **mais**
-   transação de consent no `/token` **ou** callback upstream do MCP + code
-   downstream (ADR 0006).
-2. **`vendas:read` nas leituras de venda antigas** — ainda proposta. Em prod
-   ninguém conectou; janela barata. Recomendação: exigir antes do piloto.
-3. **Callbacks de prod** — ainda proposta (Claude + Inspector hoje; Postman só
-   staging). **WhatsApp/Telegram:** desenho em ADR 0007 (proposta) — client
-   messenger dedicado, não misturar no `guedder-mcp-agent`.
+1. **Client público vs confidencial** — **ACEITA**: PKCE público no piloto.
+   Fechar o gate depois = confidencial **mais** (a) transação de consent no
+   `/token` ou (b) callback upstream do MCP + code downstream.
+2. **`vendas:read` nas leituras de venda antigas** — **ACEITA**: exigir em
+   `guedder_auditar_vendas_evento` e `guedder_resumo_vendas_evento` antes do
+   piloto (ordem Cognito prod → código MCP).
+3. **Callbacks de prod** — **ACEITA**: Claude.ai + localhost com porta/path
+   fixos (Inspector, Codex, …); Postman só staging; WhatsApp/Telegram fora
+   deste client (ADR 0007). Cognito não faz wildcard de redirect.
 
-Cada decisão lista issues filhas na ADR 0006; **não criá-las** até o aceite.
-Auth messenger (WhatsApp/Telegram via Hermes): ADR 0007 (proposta) — issues
-filhas listadas lá, sem criar.
+Auth messenger (WhatsApp/Telegram via Hermes): ADR 0007 (**proposta**) —
+issues filhas listadas lá, sem criar.
 
 ### Outros itens em aberto
 

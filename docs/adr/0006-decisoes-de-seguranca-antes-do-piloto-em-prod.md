@@ -206,17 +206,12 @@ recorta); este item fecha *se* o agente pode ler vendas.
 
 ### Issues filhas decorrentes (não criar agora)
 
-- *(infra/identity)* Somar `vendas:read` (e, se o piloto incluir escrita,
-  `lote:write` / `cupom:write`) ao `aws_cognito_resource_server.mcp` de
-  **produção** e garantir que o `guedder-mcp-agent` de prod as liste em
-  `allowed_oauth_scopes` (em prod o client usa `scope_identifiers` — conferir
-  plan: escopo novo no RS precisa aparecer no client).
-- *(mcp)* `escopo: "vendas:read"` em `guedder_auditar_vendas_evento` e
-  `guedder_resumo_vendas_evento`; alinhar `TEXTO_DO_ESCOPO` (incluir
-  auditoria/resumo); teste de negação (padrão `comprador.test.mjs`); docs
-  §8/README.
-- *(ops)* Ordem de deploy: Cognito prod com o escopo **antes** do MCP que
-  exige — senão leitura de venda 403 assim que o serviço subir.
+- *(infra/identity)* ~~Somar `vendas:read` / writes ao RS de prod~~ — **já no
+  HCL** (`identity/production/cognito.tf`, escopos espelhando staging).
+- *(mcp)* Implementação: [guedder/mcp#24](https://github.com/guedder/mcp/pull/24)
+  (`escopo: "vendas:read"` nas tools antigas + texto/teste/docs).
+- *(ops)* Ordem de deploy: Cognito (já ok) → merge/deploy do MCP#24 → abrir
+  conexão.
 
 ---
 
@@ -264,10 +259,10 @@ decisão 1.
 
 | Callback | Incluir em prod | Deixar de fora |
 |---|---|---|
-| `localhost:6274` | Debug com Inspector contra o AS de prod (já está) | Força debug só em staging; remove um redirect HTTP claro |
+| `localhost` (porta/path **fixos** por cliente) | Inspector (`6274`), Codex e outros clientes locais do time | Sem wildcard; URL nova = PR |
 | `claude.ai` | Piloto no conector que o time já usa (já está) | Piloto sem o cliente principal |
-| Postman (`oauth.pstmn.io`) | Engenharia testa o discovery de prod sem staging | Superfície menor; staging já cobre o caso (infra#399) |
-| Bot WhatsApp (URL a definir) | Produtor fala com o agente no canal real | Bot não autentica em prod até existir URL + PR de identity |
+| Postman (`oauth.pstmn.io`) | — | **Só staging** (infra#399); aceite confirma |
+| WhatsApp/Telegram | — | Fora deste client → ADR 0007 |
 
 ### Recomendação → aceite
 
