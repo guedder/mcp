@@ -3,9 +3,9 @@
  * próprios ou com papel SOCIO/GERENTE/CHECKIN — com id, nome, datas e se já
  * terminou. Primeiro passo de "vendi hoje" / "esgotou lote" / "crie um cupom".
  *
- * Não é a lista de repasses. O MCP não filtra vínculo no cliente: para ADMIN
- * a API /eventos/gestao ainda pode devolver o acervo (gap documentado; falta
- * `somenteVinculo` na API).
+ * Não é a lista de repasses. ADMIN pode ver o acervo da API; o MCP pagina e,
+ * por padrão, pede os mais recentes (dataCriacao,desc) com page_size pequeno.
+ * Sem filtro local nem `somenteVinculo` (decisão do Danilo).
  */
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -53,7 +53,7 @@ async function chamar(client, args = {}) {
   }
 }
 
-test("lista id, nome, datas e terminou; chama gestao (não repasses)", async () => {
+test("lista id, nome, datas e terminou; chama gestao com sort recente", async () => {
   const passado = "2020-01-01T22:00:00Z";
   const futuro = "2099-12-31T22:00:00Z";
   await comApiFalsa(
@@ -64,7 +64,7 @@ test("lista id, nome, datas e terminou; chama gestao (não repasses)", async () 
           { id: "e-gerente", nome: "De outra pessoa", dataInicio: futuro, dataFim: futuro, vendedorId: "u-outro" },
           { id: "e-sem-fim", nome: "Sem data fim", dataInicio: futuro, dataFim: null, vendedorId: "u-1" },
         ],
-        page: { size: 50, number: 0, totalElements: 3, totalPages: 1 },
+        page: { size: 20, number: 0, totalElements: 3, totalPages: 1 },
       },
     }),
     async (client, recebidos) => {
@@ -75,11 +75,14 @@ test("lista id, nome, datas e terminou; chama gestao (não repasses)", async () 
         { id: "e-gerente", nome: "De outra pessoa", dataInicio: futuro, dataFim: futuro, terminou: false },
         { id: "e-sem-fim", nome: "Sem data fim", dataInicio: futuro, dataFim: null, terminou: false },
       ]);
+      assert.equal(r.structuredContent.result.page, 1);
+      assert.equal(r.structuredContent.result.totalElements, 3);
       assert.equal(recebidos.length, 1);
       assert.equal(recebidos[0].method, "GET");
       assert.equal(recebidos[0].url.pathname, "/api/v3/eventos/gestao");
       assert.equal(recebidos[0].url.searchParams.get("page"), "1");
       assert.equal(recebidos[0].url.searchParams.get("page_size"), "20");
+      assert.equal(recebidos[0].url.searchParams.get("sort"), "dataCriacao,desc");
       assert.equal(recebidos[0].auth, "Bearer token-de-teste");
       assert.ok(
         !recebidos.some((p) => p.url.pathname.includes("repasses")),
@@ -89,15 +92,25 @@ test("lista id, nome, datas e terminou; chama gestao (não repasses)", async () 
   );
 });
 
-test("filtro textual vai na query; lista vazia é ok", async () => {
+test("padrão: página 1, 10 itens, sort recente; filtro e página 2 passam na query", async () => {
   await comApiFalsa(
-    () => ({ body: { content: [], page: { size: 50, number: 0, totalElements: 0, totalPages: 0 } } }),
+    () => ({ body: { content: [], page: { size: 10, number: 1, totalElements: 25, totalPages: 3 } } }),
     async (client, recebidos) => {
-      const r = await chamar(client, { filtro: "rock" });
+      const rPadrao = await chamar(client, {});
+      assert.notEqual(rPadrao.isError, true, rPadrao.content?.[0]?.text);
+      assert.equal(recebidos[0].url.searchParams.get("page"), "1");
+      assert.equal(recebidos[0].url.searchParams.get("page_size"), "10");
+      assert.equal(recebidos[0].url.searchParams.get("sort"), "dataCriacao,desc");
+
+      const r = await chamar(client, { filtro: "rock", page: 2, max_results: 5 });
       assert.notEqual(r.isError, true, r.content?.[0]?.text);
       assert.deepEqual(r.structuredContent.result.eventos, []);
-      assert.equal(recebidos[0].url.searchParams.get("filtro"), "rock");
-      assert.equal(recebidos[0].url.searchParams.get("page_size"), "50");
+      assert.equal(r.structuredContent.result.page, 2);
+      assert.equal(r.structuredContent.result.totalPages, 3);
+      assert.equal(recebidos[1].url.searchParams.get("filtro"), "rock");
+      assert.equal(recebidos[1].url.searchParams.get("page"), "2");
+      assert.equal(recebidos[1].url.searchParams.get("page_size"), "5");
+      assert.equal(recebidos[1].url.searchParams.get("sort"), "dataCriacao,desc");
     },
   );
 });
@@ -125,22 +138,17 @@ test("no modo comprador a tool não existe", async () => {
 });
 
 /**
- * Simula o que a API faz para ADMIN (ramo isAdmin do UNION): a 1ª página traz
- * eventos sem vínculo e pode omitir os que a pessoa gerencia de verdade.
- * O MCP NÃO deve inventar filtro por vendedorId (quebraria GERENTE) nem
- * trocar para repasses — só repassa o recorte. Critério GUE-568 "ADMIN sem
- * vínculo não vê" fica pendente de `somenteVinculo` na API.
+ * ADMIN vê o acervo via ramo isAdmin da API — aceito (Danilo). O MCP não
+ * filtra vínculo; pagina e ordena por mais recentes.
  */
-test("ADMIN (simulado pela API): eventos sem vínculo passam; MCP não filtra nem pagina além da 1", async () => {
+test("ADMIN (simulado pela API): eventos sem vínculo passam; pagina e ordena por recentes", async () => {
   const futuro = "2099-12-31T22:00:00Z";
   await comApiFalsa(
     () => ({
       body: {
         content: [
-          // Acervo da plataforma — sem vínculo com quem chama.
           { id: "e-plataforma-1", nome: "Show alheio A", dataInicio: futuro, dataFim: futuro, vendedorId: "outro-1" },
           { id: "e-plataforma-2", nome: "Show alheio B", dataInicio: futuro, dataFim: futuro, vendedorId: "outro-2" },
-          // O evento que o ADMIN de fato gerencia ficou fora desta página.
         ],
         page: { size: 2, number: 0, totalElements: 1688, totalPages: 844 },
       },
@@ -155,11 +163,14 @@ test("ADMIN (simulado pela API): eventos sem vínculo passam; MCP não filtra ne
       assert.notEqual(r.isError, true, r.content?.[0]?.text);
       const ids = r.structuredContent.result.eventos.map((e) => e.id);
       assert.deepEqual(ids, ["e-plataforma-1", "e-plataforma-2"], "MCP não filtra vínculo no cliente");
+      assert.equal(r.structuredContent.result.totalElements, 1688);
+      assert.equal(r.structuredContent.result.totalPages, 844);
       assert.equal(recebidos.length, 1);
       assert.equal(recebidos[0].url.pathname, "/api/v3/eventos/gestao");
-      assert.equal(recebidos[0].url.searchParams.get("page"), "1", "só a primeira página");
+      assert.equal(recebidos[0].url.searchParams.get("page"), "1");
       assert.equal(recebidos[0].url.searchParams.get("page_size"), "2");
-      assert.equal(recebidos[0].url.searchParams.get("somenteVinculo"), null, "param ainda não existe na API");
+      assert.equal(recebidos[0].url.searchParams.get("sort"), "dataCriacao,desc");
+      assert.equal(recebidos[0].url.searchParams.get("somenteVinculo"), null);
       assert.ok(!recebidos.some((p) => /repasses|administrativo/.test(p.url.pathname)));
     },
   );

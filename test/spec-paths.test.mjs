@@ -81,14 +81,18 @@ test("guedder_meus_eventos mapeia para listarEventosDeGestao (página 1)", async
     assert.equal(spec.paths["/api/v3/eventos/gestao"].get.operationId, "listarEventosDeGestao");
     assert.match(spec.paths["/api/v3/eventos/gestao"].get.description, /acervo inteiro/);
 
-    const result = await client.callTool({ name: "guedder_meus_eventos", arguments: { max_results: 10, filtro: "x" } });
+    const result = await client.callTool({
+      name: "guedder_meus_eventos",
+      arguments: { max_results: 10, filtro: "x", page: 2 },
+    });
     assert.notEqual(result.isError, true, result.content?.[0]?.text);
     assert.equal(seen.length, 1);
     assert.equal(seen[0].metodo, "GET");
     assert.equal(seen[0].pathname, "/api/v3/eventos/gestao");
-    assert.equal(seen[0].searchParams.get("page"), "1");
+    assert.equal(seen[0].searchParams.get("page"), "2");
     assert.equal(seen[0].searchParams.get("page_size"), "10");
     assert.equal(seen[0].searchParams.get("filtro"), "x");
+    assert.equal(seen[0].searchParams.get("sort"), "dataCriacao,desc");
   } finally {
     await client.close();
     await new Promise((resolve) => server.close(resolve));
