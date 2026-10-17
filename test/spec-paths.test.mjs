@@ -36,6 +36,10 @@ function sampleArgs(schema) {
  *                               paginada e agregada; coberto por mvp.test.mjs.
  *   guedder_criar_lote, guedder_criar_cupom
  *                             — escrevem (POST v1); cobertos por mvp.test.mjs.
+ *
+ * guedder_meus_eventos FICA no contrato: um GET em listarEventosDeGestao
+ * (`/api/v3/eventos/gestao`), coberto abaixo. O reshape (terminou) não tira do
+ * path. Gap ADMIN do UNION fica em meus-eventos.test.mjs, não aqui.
  */
 const FORA_DO_CONTRATO_GET = new Set([
   "guedder_rastrear_compra",
@@ -48,6 +52,52 @@ const FORA_DO_CONTRATO_GET = new Set([
   "guedder_criar_lote",
   "guedder_criar_cupom",
 ]);
+
+test("guedder_meus_eventos mapeia para listarEventosDeGestao (página 1)", async () => {
+  const seen = [];
+  const server = http.createServer((request, response) => {
+    seen.push(Object.assign(new URL(request.url, "http://localhost"), { metodo: request.method }));
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ content: [] }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  const transport = new StdioClientTransport({
+    command: "node",
+    args: ["dist/index.js"],
+    env: {
+      ...process.env,
+      GUEDDER_MCP_TRANSPORT: "stdio",
+      GUEDDER_API_BASE: `http://127.0.0.1:${port}`,
+      GUEDDER_BEARER_TOKEN: "token-de-teste",
+    },
+  });
+  const client = new Client({ name: "spec-meus-eventos", version: "0" });
+  try {
+    await client.connect(transport);
+    const resource = await client.readResource({ uri: "guedder://openapi/v3/tools/guedder_meus_eventos" });
+    const spec = JSON.parse(resource.contents[0].text);
+    assert.equal(Object.keys(spec.paths)[0], "/api/v3/eventos/gestao");
+    assert.equal(spec.paths["/api/v3/eventos/gestao"].get.operationId, "listarEventosDeGestao");
+    assert.match(spec.paths["/api/v3/eventos/gestao"].get.description, /acervo inteiro/);
+
+    const result = await client.callTool({
+      name: "guedder_meus_eventos",
+      arguments: { max_results: 10, filtro: "x", page: 2 },
+    });
+    assert.notEqual(result.isError, true, result.content?.[0]?.text);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].metodo, "GET");
+    assert.equal(seen[0].pathname, "/api/v3/eventos/gestao");
+    assert.equal(seen[0].searchParams.get("page"), "2");
+    assert.equal(seen[0].searchParams.get("page_size"), "10");
+    assert.equal(seen[0].searchParams.get("filtro"), "x");
+    assert.equal(seen[0].searchParams.get("sort"), "dataCriacao,desc");
+  } finally {
+    await client.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 test("cada tool chama o path e os query params da sua operacao OpenAPI", async () => {
   const seen = [];

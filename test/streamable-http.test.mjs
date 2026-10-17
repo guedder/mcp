@@ -47,7 +47,6 @@ test("expõe ferramentas via Streamable HTTP stateless em /mcp", async () => {
     const destaque = payload.result.tools.find((item) => item.name === "guedder_descobrir_eventos");
     assert.ok(destaque, "missing guedder_descobrir_eventos");
     for (const name of [
-      "guedder_meus_eventos",
       "guedder_buscar_ingressos_evento",
       "guedder_minhas_compras",
       "guedder_buscar_compras_evento",
@@ -61,6 +60,12 @@ test("expõe ferramentas via Streamable HTTP stateless em /mcp", async () => {
       assert.equal(tool.inputSchema.properties.page, undefined, `${name} must not expose page`);
       assert.equal(tool.inputSchema.properties.size, undefined, `${name} must not expose size`);
     }
+    // meus_eventos pagina de propósito (ADMIN no acervo): page + max_results pequeno.
+    const meus = payload.result.tools.find((item) => item.name === "guedder_meus_eventos");
+    assert.ok(meus, "missing guedder_meus_eventos");
+    assert.ok(meus.inputSchema.properties.max_results);
+    assert.ok(meus.inputSchema.properties.page, "guedder_meus_eventos must expose page");
+    assert.equal(meus.inputSchema.properties.size, undefined);
   } finally {
     process.kill();
     await new Promise((resolve) => process.once("exit", resolve));
@@ -135,6 +140,7 @@ test("o handshake initialize traz instructions com o fluxo de uso", async () => 
     assert.match(instructions, /guedder_descobrir_eventos/);
     assert.match(instructions, /guedder_detalhes_evento/);
     assert.match(instructions, /guedder_meus_eventos/);
+    assert.match(instructions, /mais recentes|dataCriacao|paginad/i);
     assert.match(instructions, /404/);
     assert.match(instructions, /guedder:\/\/openapi\/v3/);
 

@@ -684,8 +684,11 @@ Regras:
 
 Gestão de evento (para quem produz):
 1. Ache o evento e o id entre os que a pessoa gerencia: guedder_meus_eventos
-   (dona do evento ou papel SOCIO/GERENTE/CHECKIN). Não usa a lista de
-   repasses administrativos — ADMIN sem vínculo com o evento não o vê aqui.
+   (dona do evento ou papel SOCIO/GERENTE/CHECKIN). Não use a lista de
+   repasses administrativos. Por padrão devolve os mais recentes (sort
+   dataCriacao,desc) com página pequena; peça página seguinte se precisar.
+   ADMIN da plataforma pode ver eventos além dos seus vínculos — ok, desde
+   que a lista venha paginada e recente primeiro.
 2. Com o id: ingressos vendidos num período (até 31 dias, dias em São Paulo;
    sem datas = hoje): guedder_ingressos_vendidos_periodo.
 3. Lotes que esgotaram: guedder_lotes_esgotados.
@@ -1073,10 +1076,14 @@ function createMcpServer(caller?: Caller): McpServer {
   // vendas ou criar lote neste evento é a API; aqui o portão é só o escopo
   // (o que ela deixou o agente fazer) e, nas escritas, a confirmação.
   //
-  // guedder_meus_eventos NÃO tem bypass de admin neste servidor: ADMIN e
-  // produtor passam pelo mesmo GET. A API ainda documenta um ramo "acervo
-  // inteiro" para ADMIN em /eventos/gestao — a regra de negócio continua lá;
-  // o MCP não amplia a lista (não cai em repasses administrativos).
+  // guedder_meus_eventos: um GET só em /api/v3/eventos/gestao. Sem atalho de
+  // repasses e sem filtro local por vendedorId/papel — isso seria heurística
+  // frágil (ADMIN+GERENTE de terceiro sumiria, ou pior: inventaríamos vínculo).
+  //
+  // O UNION da API inclui ramo `isAdmin` (acervo). Decisão do Danilo (GUE-568
+  // follow-up): ver mais eventos como ADMIN não é problema, desde que a tool
+  // pagine e, por padrão, traga só os mais recentes (`sort=dataCriacao,desc`,
+  // `page_size` pequeno). Sem `somenteVinculo`.
   if (!PUBLIC_ONLY) {
     server.registerResource(
       "guedder_meus_eventos_schema",
@@ -1100,27 +1107,40 @@ function createMcpServer(caller?: Caller): McpServer {
         title: "Meus eventos (gestão)",
         description:
           "Lista os eventos que a pessoa logada gerencia: os que produz e os em que tem papel " +
-          "SOCIO, GERENTE ou CHECKIN. Devolve id, nome, dataInicio, dataFim e se já terminou. " +
-          "Use antes de vendas, lotes esgotados ou criar lote/cupom, quando o pedido não traz o id. " +
-          "Não é a lista administrativa de repasses. Schema: guedder://openapi/v3/tools/guedder_meus_eventos.",
+          "SOCIO, GERENTE ou CHECKIN. Devolve id, nome, dataInicio, dataFim e se já terminou, " +
+          "mais página/total para seguir paginando. Por padrão: os mais recentes " +
+          "(`dataCriacao,desc`) e poucas linhas. ADMIN da plataforma pode ver além dos " +
+          "vínculos — use página e filtro. Não é a lista de repasses. " +
+          "Schema: guedder://openapi/v3/tools/guedder_meus_eventos.",
         inputSchema: {
           filtro: z.string().optional().describe("Busca textual no nome, local ou descrição"),
+          page: z
+            .number()
+            .int()
+            .min(1)
+            .default(1)
+            .describe("Página 1-based; padrão 1"),
           max_results: z
             .number()
             .int()
             .min(1)
-            .max(100)
-            .default(50)
-            .describe("Máximo de eventos retornados; máximo 100"),
+            .max(50)
+            .default(10)
+            .describe("Itens por página; padrão 10, máximo 50"),
         },
         outputSchema: TOOL_OUTPUT_SCHEMA,
         annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       },
       async (args: any) => {
         try {
-          // page 1-based, como /api/v3/eventos e a própria gestao.
+          // page 1-based. sort fechado da API: só dataCriacao — "mais recentes".
           const pagina: any = await apiGet("/api/v3/eventos/gestao", {
-            query: { page: 1, page_size: args?.max_results, filtro: args?.filtro },
+            query: {
+              page: args?.page ?? 1,
+              page_size: args?.max_results ?? 10,
+              filtro: args?.filtro,
+              sort: "dataCriacao,desc",
+            },
             auth: true,
             caller,
           });
@@ -1136,7 +1156,14 @@ function createMcpServer(caller?: Caller): McpServer {
               terminou: Number.isFinite(fimMs) && fimMs < agora,
             };
           });
-          return ok({ eventos });
+          const meta = pagina?.page ?? {};
+          return ok({
+            eventos,
+            page: meta.number != null ? Number(meta.number) + 1 : (args?.page ?? 1),
+            pageSize: meta.size ?? args?.max_results ?? 10,
+            totalElements: meta.totalElements ?? eventos.length,
+            totalPages: meta.totalPages ?? 1,
+          });
         } catch (e: any) {
           return falha(e);
         }
