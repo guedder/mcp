@@ -84,12 +84,14 @@ que o cliente não consiga escrever sozinho.
   deliberado.
 - O que limita o estrago continua sendo a lista de escopos do app client e a de
   `callback_urls`.
-- **O que fecharia os dois tetos**: tornar o app client confidencial, com o
-  secret só neste servidor, e o MCP passar a emitir a própria sessão. O molde
-  já existe na casa: `CheckinSessionTokenService` no `guedder-api` (JWT RS256,
-  escopos calculados na emissão e congelados, `aud` amarrado ao serviço, TTL
-  curto, sem revogação como tradeoff assumido). É o passo para quando aparecer
-  cliente de terceiro de fato não confiável, e não se paga enquanto o cliente é
-  o plugin da própria Guedder.
+- **Errata (ADR 0006, 2026-10-17):** a redação original dizia que
+  “confidencial + sessão emitida pelo MCP” fechava os dois tetos. Isso **não
+  basta**: com callback allowlisted, o cliente ainda vai ao `/authorize` do
+  Cognito (sem secret), recebe o `code` e troca no `/token` público deste
+  servidor, que acrescentaria o secret. Fechar de verdade exige também
+  **(a)** transação de consent amarrada ao `/token`, ou **(b)** callback
+  upstream do MCP + code downstream. Detalhe e aceite do piloto (PKCE
+  público): ADR 0006. O molde `CheckinSessionTokenService` continua útil
+  *como peça* desse pacote, não como solução isolada.
 - O segredo do HMAC é por processo. Com mais de uma réplica, a prova emitida
   numa não vale na outra e a pessoa reabre a tela.

@@ -354,9 +354,10 @@ autorização, não barreira criptográfica:
    `/authorize` do Cognito, contornando este servidor.
 
 O que limita o estrago continua sendo a lista de escopos do app client e a de
-`callback_urls`. Os dois se fecham com a mesma mudança: app client
-confidencial, secret só neste servidor, e o MCP passando a emitir a própria
-sessão — molde na casa: `CheckinSessionTokenService` do `guedder-api`.
+`callback_urls`. **Atenção:** confidencial + sessão própria **não** fecha o
+bypass sozinho (authorize Cognito → `/token` do MCP). Fechar de verdade exige
+também (a) transação de consent no `/token` ou (b) callback upstream do MCP +
+code downstream — ADR 0006.
 
 ---
 
@@ -421,8 +422,8 @@ para o porquê de não ser reforma de `guedder_minhas_compras`).
 | `guedder_minhas_compras` | ✅ `conta:read` | `GET /api/v3/compras` |
 | `guedder_status_da_compra` | ✅ `conta:read` | Agrega `GET /api/v3/ingressos` por `idPedido` |
 | `guedder_buscar_compras_evento` | ✅ | `GET /api/v2/compra/evento/{id}/extrato` |
-| `guedder_auditar_vendas_evento` | ✅ | `GET /api/v1/metrica/{id}/ultimas-vendas` |
-| `guedder_resumo_vendas_evento` | ✅ | `GET /api/v1/metrica/{id}/resumo-vendas` |
+| `guedder_auditar_vendas_evento` | ✅ `vendas:read` | `GET /api/v1/metrica/{id}/ultimas-vendas` |
+| `guedder_resumo_vendas_evento` | ✅ `vendas:read` | `GET /api/v1/metrica/{id}/resumo-vendas` |
 | `guedder_listar_integracoes_pagamento` | ✅ ADMIN | `GET /api/v1/administrativo/gateway-adquirentes` |
 | `guedder_listar_resumo_repasses_eventos` | ✅ ADMIN | `GET /api/v3/administrativo/repasses/eventos` |
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
@@ -763,11 +764,14 @@ seguinte.
   tela daqui só ganhou os textos dos três escopos novos e vai ser substituída;
   hoje o escopo vale para todos os eventos que a pessoa alcança, e quem recorta
   por evento é a permissão da API.
-- **Escopo nas leituras de venda antigas.** `guedder_auditar_vendas_evento` e
-  `guedder_resumo_vendas_evento` continuam sem `vendas:read`: exigir agora
-  quebraria quem já conectou sem ele. Ligar junto com o consent central.
-- **Client confidencial e sessão emitida aqui.** É o que fecha os dois tetos da
-  tela de consent; gatilho é cliente de terceiro de fato não confiável.
+- **Escopo nas leituras de venda antigas.** Decisão 2 da ADR 0006 **aceita**;
+  implementação neste repo: `escopo: "vendas:read"` em
+  `guedder_auditar_vendas_evento` e `guedder_resumo_vendas_evento`. RS Cognito
+  de staging e produção já declaram o escopo (verificado em
+  `identity/*/cognito.tf`).
+- **Fechar o gate de consent de verdade.** Não é “só confidencial + sessão”
+  (ADR 0006 / Codex P1). Pacote (a) ou (b) quando houver cliente de terceiro
+  não confiável; piloto permanece PKCE público.
 - **Escopos vs tools de staff/admin.** `conta:read` e `pedido:cancelar` são
   exigidos nas tools do comprador desde a ADR 0004. As tools de staff/admin
   (`buscar_ingressos_evento`, `get_lote`, o bloco financeiro) continuam sem

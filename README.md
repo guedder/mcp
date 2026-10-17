@@ -95,11 +95,12 @@ Duas coisas que a tela **não** garante, e é melhor saber quais são:
    segredo e dá para ir direto ao `/authorize` do Cognito, contornando este
    servidor.
 
-Os dois se fecham com a mesma mudança: tornar o app client confidencial, com o
-secret só neste servidor, e o MCP passando a emitir a sessão (molde:
-`CheckinSessionTokenService` no guedder-api). É o passo para quando aparecer
-cliente de terceiro não confiável, e não se paga enquanto o cliente é o plugin
-da própria Guedder.
+**Atenção:** tornar o app client confidencial e emitir outra sessão **não**
+fecha o bypass sozinho — o cliente ainda pode autorizar no Cognito e trocar o
+`code` no `/token` deste servidor. Fechar de verdade exige também amarrar a
+troca a uma transação de consent, ou callback upstream do MCP + code
+downstream (ADR 0006). No piloto o client permanece público (PKCE); o freio é
+a allowlist de `callback_urls` e os escopos.
 
 As ferramentas públicas não precisam de token. Estas exigem `GUEDDER_BEARER_TOKEN`:
 `guedder_buscar_ingressos_evento`, `guedder_meus_ingressos`, `guedder_minhas_compras`,
@@ -163,8 +164,8 @@ cada uma).
 | `guedder_get_lote` | ✅ | `GET /api/v3/eventos/{codigoOrEventoId}/lotes/{codigoOrLoteId}` |
 | `guedder_buscar_ingressos_evento` | ✅ | `GET /api/v3/eventos/{eventoId}/ingressos` (MCP: `max_results`, sempre página 0) |
 | `guedder_buscar_compras_evento` | ✅ | `GET /api/v2/compra/evento/{eventoId}/extrato` (MCP: `max_results`, sempre página 0) |
-| `guedder_auditar_vendas_evento` | ✅ | `GET /api/v1/metrica/{eventoId}/ultimas-vendas` (auditoria operacional; MCP: `max_results`, sempre página 0) |
-| `guedder_resumo_vendas_evento` | ✅ | `GET /api/v1/metrica/{eventoId}/resumo-vendas` |
+| `guedder_auditar_vendas_evento` | ✅ `vendas:read` | `GET /api/v1/metrica/{eventoId}/ultimas-vendas` (auditoria operacional; MCP: `max_results`, sempre página 0) |
+| `guedder_resumo_vendas_evento` | ✅ `vendas:read` | `GET /api/v1/metrica/{eventoId}/resumo-vendas` |
 | `guedder_listar_integracoes_pagamento` | ✅ ADMIN | `GET /api/v1/administrativo/gateway-adquirentes` (MCP: `max_results`, sempre página 0) |
 | `guedder_listar_resumo_repasses_eventos` | ✅ ADMIN | `GET /api/v3/administrativo/repasses/eventos` (MCP: `max_results`, sempre página 0) |
 | `guedder_listar_locais_recentes` | ✅ ADMIN | `GET /api/v3/administrativo/locais-recentes` |
