@@ -582,22 +582,25 @@ const TOOLS: Tool[] = [
     name: "guedder_auditar_vendas_evento",
     title: "Auditar vendas recentes do evento",
     description:
-      "Retorna as vendas recentes de um evento para auditoria operacional. Não é uma trilha de alterações do evento; requer permissão de leitura de vendas.",
+      "Retorna as vendas recentes de um evento para auditoria operacional. Não é uma trilha de alterações do evento; exige o escopo vendas:read e permissão sobre o evento.",
     openApiOperationId: "getContagemIngressosVendidos",
     inputSchema: {
       eventoId: UUID_,
       max_results: z.number().int().min(1).max(100).default(50).describe("Máximo de vendas retornadas; máximo 100"),
     },
     auth: true,
+    escopo: "vendas:read",
     build: (a) => ({ path: `/api/v1/metrica/${enc(a.eventoId)}/ultimas-vendas`, query: { page: 0, size: a.max_results } }),
   },
   {
     name: "guedder_resumo_vendas_evento",
     title: "Resumo de vendas do evento",
-    description: "Agregados de vendas de um evento para gestão. Requer permissão de leitura de vendas.",
+    description:
+      "Agregados de vendas de um evento para gestão. Exige o escopo vendas:read e permissão sobre o evento.",
     openApiOperationId: "getResumoVendas",
     inputSchema: { eventoId: UUID_ },
     auth: true,
+    escopo: "vendas:read",
     build: (a) => ({ path: `/api/v1/metrica/${enc(a.eventoId)}/resumo-vendas` }),
   },
   {
@@ -1766,7 +1769,8 @@ const TEXTO_DO_ESCOPO: Record<string, string> = {
   "conta:read": "Ver seus ingressos, suas compras e seus dados de perfil",
   "pedido:cancelar":
     "Cancelar pedidos seus, o que devolve o valor pelo mesmo meio de pagamento. O agente vai pedir sua confirmação antes de cada cancelamento",
-  "vendas:read": "Ver vendas dos eventos que você gerencia: ingressos vendidos por período e lotes esgotados",
+  "vendas:read":
+    "Ver vendas dos eventos que você gerencia: resumo, auditoria de vendas recentes, ingressos vendidos por período e lotes esgotados",
   "lote:write":
     "Criar lotes de ingresso nos eventos que você gerencia. O agente vai pedir sua confirmação antes de cada criação",
   "cupom:write":
@@ -1792,9 +1796,8 @@ const TEXTO_DO_ESCOPO: Record<string, string> = {
  * compraria o que parece comprar, porque a tela é pública e o cliente pode
  * buscá-la para obter um nonce fresco. Isto eleva a barra de "somar um
  * parâmetro" para "buscar a tela e repetir a prova", e fecha o caso do cliente
- * que pula a tela por descuido. Fechar o caso do cliente deliberado é o mesmo
- * passo já registrado no `telaDeConsent`: client confidencial e sessão emitida
- * aqui.
+ * que pula a tela por descuido. Fechar o caso do cliente deliberado exige o
+ * pacote da ADR 0006 ((a) ou (b)) — confidencial + sessão sozinho não basta.
  */
 function provaDeConsent(pedido: URLSearchParams, deslocamento = 0): string {
   return hmacDeConsent(
@@ -1829,13 +1832,12 @@ function escaparHtml(valor: string): string {
  * (PKCE, sem secret), então um cliente malicioso que já tenha o client_id pode
  * ir direto ao /authorize do Cognito e pular esta tela. O que limita o estrago
  * continua sendo a lista de `callback_urls` do app client e os escopos que ele
- * permite.
+ * permite. PKCE público no piloto: ADR 0006 Decisão 1 (aceita).
  *
- * Fechar isso de verdade exige tornar o app client confidencial, com o secret
- * só neste servidor, e o MCP passar a emitir a sessão (o molde é o
- * `CheckinSessionTokenService`). É o passo seguinte quando aparecer um cliente
- * de terceiro de fato não confiável, e não vale o custo enquanto o cliente é o
- * plugin da própria Guedder.
+ * "Confidencial + sessão própria" NÃO fecha o bypass sozinho (Codex P1 /
+ * ADR 0006): o cliente ainda autoriza no Cognito e troca o code no /token
+ * deste servidor. Fechar de verdade exige também (a) transação de consent
+ * amarrada ao /token ou (b) callback upstream do MCP + code downstream.
  */
 function telaDeConsent(pedido: URLSearchParams, anunciados: string[], resource: string): string {
   // O valor do checkbox é o nome COMPLETO (é o que o Cognito entende no
