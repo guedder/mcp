@@ -1678,6 +1678,10 @@ async function handleStreamableHttpRequest(req: IncomingMessage, res: ServerResp
     try {
       caller = await verifyToken(req.headers.authorization);
     } catch (e) {
+      // Motivo no log quando veio token: sem isto, "POST /mcp -> 401" não dizia
+      // se era token expirado, client errado ou claim faltando, e o login de
+      // prod falhou calado. Só a mensagem, nunca o token.
+      if (req.headers.authorization) console.error(`mcp: token recusado: ${e instanceof AuthError ? e.message : String(e)}`);
       const metadataUrl = `${req.headers["x-forwarded-proto"] ?? "http"}://${req.headers.host ?? "localhost"}${METADATA_PATH}`;
       res.writeHead(401, {
         "content-type": "application/json",
