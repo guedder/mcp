@@ -107,8 +107,14 @@ export function createVerifier(cfg: AuthConfig) {
       }
     }
 
-    const email = (payload.email ?? payload["cognito:username"]) as string | undefined;
-    if (!email) throw new AuthError("Token sem email — não dá para resolver o usuário.");
+    // `email` só existe no access token quando a Pre-Token Lambda o injeta. O
+    // pool de produção roda sem Lambda (`LambdaConfig: {}`), e o access token
+    // cru do Cognito traz `username`, nunca `email` nem `cognito:username` (essa
+    // é claim de id token). Exigir `email` recusava todo login de prod com 401
+    // e o cliente MCP ficava sem nenhuma tool. `username` identifica a pessoa do
+    // mesmo jeito: a assinatura, o issuer e o client_id já foram conferidos.
+    const email = (payload.email ?? payload["cognito:username"] ?? payload.username) as string | undefined;
+    if (!email) throw new AuthError("Token sem email nem username — não dá para resolver o usuário.");
 
     const role = payload["custom:role"] as string | undefined;
 

@@ -98,9 +98,20 @@ test("sem Authorization é recusado", async () => {
   await assert.rejects(() => verify("Bearer   "), AuthError);
 });
 
-test("token sem email não autentica", async () => {
+// Access token cru do Cognito, sem Pre-Token Lambda (pool de produção hoje):
+// tem `username` e nada de `email`. Recusar isto deixava prod inteira em 401.
+test("access token sem Lambda autentica pelo username", async () => {
   const { verify, emitir } = await ambiente();
-  const semEmail = await emitir({ email: undefined, "cognito:username": undefined });
+  const cru = await emitir({ email: undefined, token_use: "access", username: "google_1234", sub: "abc" });
+  const caller = await verify(`Bearer ${cru}`);
+  assert.equal(caller.email, "google_1234");
+  assert.equal(caller.usuarioId, undefined);
+  assert.equal(caller.isAdmin, false);
+});
+
+test("token sem email nem username não autentica", async () => {
+  const { verify, emitir } = await ambiente();
+  const semEmail = await emitir({ email: undefined, "cognito:username": undefined, username: undefined });
   await assert.rejects(() => verify(`Bearer ${semEmail}`), AuthError);
 });
 
